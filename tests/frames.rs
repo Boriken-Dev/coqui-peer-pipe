@@ -2,9 +2,10 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
+use std::time::Duration;
 
 use coqui_peer::{read_frame, write_frame};
-use coqui_peer_pipe::{DEFAULT_MAX_MESSAGE, MessageTransport, Messages};
+use coqui_peer_pipe::{DEFAULT_MAX_MESSAGE, MessageTransport, Messages, ReadTimeout, WriteTimeout};
 use proptest::prelude::*;
 
 /// A scripted stream: bytes to read in the given chunks, an error between chunks, and what was written.
@@ -50,6 +51,18 @@ impl Write for Script {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl ReadTimeout for Script {
+    fn set_read_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl WriteTimeout for Script {
+    fn set_write_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
         Ok(())
     }
 }
@@ -120,7 +133,10 @@ fn a_receive_that_times_out_keeps_what_arrived() {
 #[test]
 fn a_declared_length_above_the_bound_is_refused_before_it_is_read() {
     let mut messages = reading(&[b"\x00\x00\x00\x06", b"abcdef"]).with_max_message(5);
-    assert_eq!(messages.recv().unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        messages.recv().unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
     assert_eq!(messages.get_ref().reads, 1, "nothing read past the header");
     assert_eq!(
         messages.recv().unwrap_err().kind(),
@@ -134,7 +150,10 @@ fn a_declared_length_above_the_bound_is_refused_before_it_is_read() {
 fn the_longest_declared_length_costs_nothing_until_it_is_sent() {
     let mut messages = reading(&[b"\xff\xff\xff\xff", b"a"]).with_max_message(usize::MAX);
     // The stream ends after one byte: an allocation of 4 GiB here would be seen as a failure to run.
-    assert_eq!(messages.recv().unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    assert_eq!(
+        messages.recv().unwrap_err().kind(),
+        io::ErrorKind::UnexpectedEof
+    );
 }
 
 #[test]
@@ -156,8 +175,14 @@ fn a_send_that_stops_inside_a_frame_refuses_every_later_send() {
         write_room: Some(2),
         ..Script::default()
     });
-    assert_eq!(messages.send(b"abc").unwrap_err().kind(), io::ErrorKind::TimedOut);
-    assert_eq!(messages.send(b"x").unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(
+        messages.send(b"abc").unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
+    assert_eq!(
+        messages.send(b"x").unwrap_err().kind(),
+        io::ErrorKind::BrokenPipe
+    );
 }
 
 #[test]
@@ -166,9 +191,15 @@ fn a_send_that_wrote_nothing_can_be_repeated() {
         write_room: Some(0),
         ..Script::default()
     });
-    assert_eq!(messages.send(b"abc").unwrap_err().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        messages.send(b"abc").unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
     assert!(messages.get_ref().written.is_empty());
-    assert_eq!(messages.send(b"x").unwrap_err().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        messages.send(b"x").unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
 }
 
 #[test]
@@ -197,7 +228,12 @@ fn only_a_bound_above_the_default_is_listed_as_weaker() {
             .weakened()
             .is_empty()
     );
-    assert!(Messages::new(script()).with_max_message(1).weakened().is_empty());
+    assert!(
+        Messages::new(script())
+            .with_max_message(1)
+            .weakened()
+            .is_empty()
+    );
     let weakened = Messages::new(script())
         .with_max_message(DEFAULT_MAX_MESSAGE + 1)
         .weakened();

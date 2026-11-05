@@ -5,8 +5,10 @@
 #![forbid(unsafe_code)]
 
 use alloc::vec::Vec;
-use std::io::{self, Read, Write};
+use core::cell::Cell;
 use core::time::Duration;
+use std::io::{self, Read, Write};
+use std::time::Instant;
 
 use coqui_peer::{MAX_MESSAGE, MessageTransport, ReadTimeout, Weakening, WriteTimeout};
 
@@ -79,7 +81,10 @@ impl Decoder {
 }
 
 pub(crate) fn too_long() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "a frame is above the message bound")
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "a frame is above the message bound",
+    )
 }
 
 /// One frame as one buffer, so it reaches the stream in one write where the stream allows it.
@@ -129,6 +134,10 @@ pub struct Messages<S> {
     max_message: usize,
     torn: bool,
     broken: bool,
+    /// Set through [`ReadTimeout`] on `&self`: a bound on a whole receive, not on each read of it.
+    read_limit: Cell<Option<Duration>>,
+    /// Set through [`WriteTimeout`] on `&self`: a bound on a whole send.
+    write_limit: Cell<Option<Duration>>,
 }
 
 impl<S> Messages<S> {
@@ -141,6 +150,8 @@ impl<S> Messages<S> {
             max_message: DEFAULT_MAX_MESSAGE,
             torn: false,
             broken: false,
+            read_limit: Cell::new(None),
+            write_limit: Cell::new(None),
         }
     }
 
@@ -177,7 +188,15 @@ impl<S> Messages<S> {
     }
 }
 
-impl<S: Read + Write> MessageTransport for Messages<S> {
+/// What is left until `deadline`, or `TimedOut` once nothing is.
+fn left_until(deadline: Instant) -> io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|left| !left.is_zero())
+        .ok_or_else(|| io::ErrorKind::TimedOut.into())
+}
+
+impl<S: Read + Write + ReadTimeout + WriteTimeout> MessageTransport for Messages<S> {
     /// # Errors
     ///
     /// `InvalidInput` for a message above the bound, with nothing written. Otherwise the stream's
@@ -187,8 +206,18 @@ impl<S: Read + Write> MessageTransport for Messages<S> {
             return Err(torn());
         }
         let frame = encode(message, self.max_message)?;
+        let deadline = self.write_limit.get().map(|limit| Instant::now() + limit);
         let mut written = 0;
         while written < frame.len() {
+            if let Some(until) = deadline {
+                match left_until(until).and_then(|left| self.io.set_write_timeout(Some(left))) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        self.torn = written > 0;
+                        return Err(error);
+                    }
+                }
+            }
             match self.io.write(&frame[written..]) {
                 Ok(0) => {
                     self.torn = written > 0;
@@ -214,7 +243,11 @@ impl<S: Read + Write> MessageTransport for Messages<S> {
         if self.broken {
             return Err(too_long());
         }
+        let deadline = self.read_limit.get().map(|limit| Instant::now() + limit);
         loop {
+            if let Some(until) = deadline {
+                self.io.set_read_timeout(Some(left_until(until)?))?;
+            }
             let count = match self.io.read(self.decoder.space()) {
                 Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
                 Ok(count) => count,
@@ -235,12 +268,16 @@ impl<S: Read + Write> MessageTransport for Messages<S> {
 
 impl<S: ReadTimeout> ReadTimeout for Messages<S> {
     fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        self.io.set_read_timeout(timeout)
+        self.io.set_read_timeout(timeout)?;
+        self.read_limit.set(timeout);
+        Ok(())
     }
 }
 
 impl<S: WriteTimeout> WriteTimeout for Messages<S> {
     fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        self.io.set_write_timeout(timeout)
+        self.io.set_write_timeout(timeout)?;
+        self.write_limit.set(timeout);
+        Ok(())
     }
 }
