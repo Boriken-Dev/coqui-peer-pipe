@@ -318,10 +318,7 @@ fn push_timeouts(list: &mut Vec<Weakening>, read: Option<Duration>, write: Optio
 }
 
 fn show(timeout: Option<Duration>) -> alloc::string::String {
-    timeout.map_or_else(
-        || "none".to_string(),
-        |limit| alloc::format!("{limit:?}"),
-    )
+    timeout.map_or_else(|| "none".to_string(), |limit| alloc::format!("{limit:?}"))
 }
 
 fn log(list: &[Weakening]) {

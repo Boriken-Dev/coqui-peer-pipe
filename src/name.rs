@@ -38,7 +38,7 @@ impl PipeName {
         }
         let directory = ["XDG_RUNTIME_DIR", "TMPDIR"]
             .iter()
-            .filter_map(|variable| std::env::var_os(variable))
+            .filter_map(std::env::var_os)
             .map(PathBuf::from)
             .find(|path| path.is_absolute())
             .ok_or(Error::NoRuntimeDirectory)?;

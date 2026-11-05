@@ -2,9 +2,12 @@
 #![forbid(unsafe_code)]
 
 use core::time::Duration;
+use std::ffi::OsString;
+use std::fs::{self, DirBuilder, File, OpenOptions, Permissions, TryLockError};
 use std::io::{self, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsFd;
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -19,6 +22,11 @@ use crate::options::{ConnectOptions, ListenerOptions};
 
 /// How often a connect looks again at a queue with no room.
 const FULL_QUEUE_POLL: Duration = Duration::from_millis(5);
+/// Group and other write bits.
+const WRITABLE_BY_OTHERS: u32 = 0o022;
+const STICKY: u32 = 0o1000;
+/// Tries at a new name for the private directory of a bind.
+const PRIVATE_NAME_ATTEMPTS: u32 = 64;
 
 pub(crate) fn current_user() -> io::Result<String> {
     Ok(effective_user().to_string())
@@ -82,15 +90,11 @@ impl Stream {
     }
 
     pub(crate) fn shutdown(&self) -> io::Result<()> {
-        shutdown(&self.socket)
-    }
-}
-
-/// The socket's end in both directions; one the peer already ended is ended.
-fn shutdown(socket: &UnixStream) -> io::Result<()> {
-    match socket.shutdown(Shutdown::Both) {
-        Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
-        other => other,
+        match self.socket.shutdown(Shutdown::Both) {
+            // The peer already ended it, which is the state asked for.
+            Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
+            other => other,
+        }
     }
 }
 
@@ -145,35 +149,168 @@ fn connect_error(error: io::Error) -> Error {
     }
 }
 
-/// The socket's path, removed when the listener ends if it is still this socket.
+/// What a listener holds at its path: the lock, and the socket file to remove when it ends.
 #[derive(Debug)]
 pub(crate) struct Bound {
     path: PathBuf,
+    device: u64,
+    inode: u64,
+    /// Dropped after the path is removed, so nobody else can bind before that.
+    _lock: File,
 }
 
 impl Drop for Bound {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if fs::symlink_metadata(&self.path)
+            .is_ok_and(|found| found.dev() == self.device && found.ino() == self.inode)
+        {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
-/// Binds `name`, returning a blocking-free listener and what removes its path.
+/// Refuses a directory on the way to a socket that someone else could use to replace it: the
+/// socket's own directory when others can write it, one above it when others can write it and rename
+/// what it holds, and any of them another user owns. Root can do all of that in any case.
+fn check_directories(directory: &Path, user: u32) -> Result<(), Error> {
+    for (depth, ancestor) in directory.ancestors().enumerate() {
+        let metadata = fs::metadata(ancestor)?;
+        if metadata.uid() != user && metadata.uid() != 0 {
+            return Err(Error::ForeignDirectory);
+        }
+        let others_can_write = metadata.mode() & WRITABLE_BY_OTHERS != 0;
+        let is_sticky = metadata.mode() & STICKY != 0;
+        if others_can_write && (depth == 0 || !is_sticky) {
+            return Err(Error::SharedDirectory);
+        }
+    }
+    Ok(())
+}
+
+/// The lock of `path`, held by one listener at a time. Two binders probing one stale socket could
+/// otherwise each remove what the other just bound. The file stays: a removed lock file would let
+/// a waiter hold a lock on a file nobody else can see.
+fn take_lock(path: &Path) -> Result<File, Error> {
+    let mut lock_path = OsString::from(path);
+    lock_path.push(".lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(lock_path)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(lock),
+        Err(TryLockError::WouldBlock) => Err(Error::NameTaken),
+        Err(TryLockError::Error(error)) => Err(Error::Io(error)),
+    }
+}
+
+/// Leaves `path` free, removing only a socket of this user that nothing listens on.
+fn clear_path(path: &Path, user: u32, remove_stale: bool) -> Result<(), Error> {
+    let found = match fs::symlink_metadata(path) {
+        Ok(found) => found,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    if !found.file_type().is_socket() {
+        return Err(Error::NotASocket);
+    }
+    if found.uid() != user {
+        return Err(Error::NameTaken);
+    }
+    let deadline = Instant::now() + FULL_QUEUE_POLL;
+    match try_connect(path, deadline) {
+        Ok(_) => Err(Error::NameTaken),
+        Err(Error::NotListening) if remove_stale => match fs::remove_file(path) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(Error::Io(error)),
+            _ => Ok(()),
+        },
+        Err(Error::NotListening) => Err(Error::NameTaken),
+        Err(other) => Err(other),
+    }
+}
+
+/// A new directory beside the socket, only this user's, removed when dropped.
+struct PrivateDirectory {
+    path: PathBuf,
+}
+
+impl PrivateDirectory {
+    fn create(beside: &Path) -> io::Result<Self> {
+        let seed = std::process::id();
+        for attempt in 0..PRIVATE_NAME_ATTEMPTS {
+            let path = beside.join(format!(".{:08x}", seed.wrapping_add(attempt)));
+            match DirBuilder::new().mode(0o700).create(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::ErrorKind::AlreadyExists.into())
+    }
+}
+
+impl Drop for PrivateDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.path.join("s"));
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+/// Binds in a private directory and links the socket to `path` once its mode is set, so nobody can
+/// see or connect to it with any other mode. std and bind(2) take the mode from the umask, which
+/// belongs to the whole process.
+fn bind_privately(
+    directory: &Path,
+    path: &Path,
+    options: &ListenerOptions,
+) -> Result<Socket, Error> {
+    let private = PrivateDirectory::create(directory)?;
+    let temporary = private.path.join("s");
+    let address = SockAddr::unix(&temporary).map_err(|_| Error::InvalidName)?;
+    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+    socket.bind(&address)?;
+    fs::set_permissions(&temporary, Permissions::from_mode(options.socket_mode))?;
+    socket.listen(options.backlog)?;
+    fs::hard_link(&temporary, path).map_err(|error| match error.kind() {
+        io::ErrorKind::AlreadyExists => Error::NameTaken,
+        _ => Error::Io(error),
+    })?;
+    Ok(socket)
+}
+
+/// Binds `name` after the checks [`Listener`](crate::Listener) documents, returning a listener in
+/// non-blocking mode and what removes its path.
 pub(crate) fn bind_socket(
     name: &PipeName,
     options: &ListenerOptions,
 ) -> Result<(UnixListener, Bound), Error> {
-    let address = SockAddr::unix(name.path()).map_err(|_| Error::InvalidName)?;
-    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
-    socket.bind(&address).map_err(|error| match error.kind() {
-        io::ErrorKind::AddrInUse => Error::NameTaken,
-        _ => Error::Io(error),
-    })?;
-    socket.listen(options.backlog)?;
+    let file_name = name.path().file_name().ok_or(Error::InvalidName)?;
+    let parent = match name.path().parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let directory = fs::canonicalize(parent)?;
+    let user = effective_user();
+    if !options.shared_directory {
+        check_directories(&directory, user)?;
+    }
+    let path = directory.join(file_name);
+    let lock = take_lock(&path)?;
+    clear_path(&path, user, options.remove_stale)?;
+    let socket = bind_privately(&directory, &path, options)?;
     socket.set_nonblocking(true)?;
+    let bound = fs::symlink_metadata(&path)?;
     Ok((
         socket.into(),
         Bound {
-            path: name.path().to_path_buf(),
+            device: bound.dev(),
+            inode: bound.ino(),
+            path,
+            _lock: lock,
         },
     ))
 }
@@ -209,10 +346,11 @@ impl Listener {
             }
             match self.socket.accept() {
                 Ok((socket, _)) => {
-                    // A BSD socket inherits the listener's non-blocking mode.
+                    // Whether an accepted socket inherits the listener's mode differs by system.
                     socket.set_nonblocking(false)?;
                     return Ok(Stream::new(socket, self.read_timeout, self.write_timeout)?);
                 }
+                // A client gone since the wait, or another caller first: wait again.
                 Err(error)
                     if matches!(
                         error.kind(),

@@ -93,7 +93,10 @@ mod windows {
             r"\\\pipe\x",
             "\\\\.\\pipe\\a\nb",
         ] {
-            assert!(matches!(PipeName::at(bad), Err(Error::InvalidName)), "{bad}");
+            assert!(
+                matches!(PipeName::at(bad), Err(Error::InvalidName)),
+                "{bad}"
+            );
         }
         assert!(PipeName::at(r"\\.\pipe\group\name").is_ok());
         assert!(PipeName::at(r"\\HOST\PIPE\name").is_ok());
@@ -123,7 +126,10 @@ mod windows {
             PipeName::on_host(r"a\b", "x"),
             Err(Error::InvalidName)
         ));
-        assert!(matches!(PipeName::on_host("", "x"), Err(Error::InvalidName)));
+        assert!(matches!(
+            PipeName::on_host("", "x"),
+            Err(Error::InvalidName)
+        ));
     }
 }
 
@@ -143,7 +149,10 @@ mod unix {
     #[test]
     fn every_documented_spelling_parses() {
         let name = PipeName::at("/run/canoa/jose.sock").unwrap();
-        assert_eq!("unix:/run/canoa/jose.sock".parse::<PipeName>().unwrap(), name);
+        assert_eq!(
+            "unix:/run/canoa/jose.sock".parse::<PipeName>().unwrap(),
+            name
+        );
         assert_eq!("/run/canoa/jose.sock".parse::<PipeName>().unwrap(), name);
         assert!(matches!(
             r"\\.\pipe\x".parse::<PipeName>(),

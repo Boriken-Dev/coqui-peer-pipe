@@ -1,4 +1,5 @@
 //! The crate's error.
+#![forbid(unsafe_code)]
 
 use core::fmt;
 use std::io;

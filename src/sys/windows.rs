@@ -14,9 +14,9 @@ use std::time::Instant;
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_FILENAME_EXCED_RANGE,
     ERROR_INVALID_NAME, ERROR_IO_PENDING, ERROR_NO_DATA, ERROR_OPERATION_ABORTED,
-    ERROR_PATH_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, ERROR_PIPE_LOCAL,
-    ERROR_PIPE_NOT_CONNECTED, ERROR_SEM_TIMEOUT, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE,
-    INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    ERROR_PATH_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED,
+    ERROR_SEM_TIMEOUT, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
@@ -57,7 +57,7 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(core::iter::once(0)).collect()
 }
 
-fn path_of(name: &PipeName) -> Result<Vec<u16>, Error> {
+pub(crate) fn path_of(name: &PipeName) -> Result<Vec<u16>, Error> {
     Ok(wide(name.path().to_str().ok_or(Error::InvalidName)?))
 }
 
@@ -442,7 +442,37 @@ pub(crate) struct Instances {
     max_instances: u32,
     buffer_size: u32,
     first_instance: bool,
-    descriptor: Option<Vec<u16>>,
+    /// SDDL, NUL-terminated.
+    descriptor: Vec<u16>,
+}
+
+/// A security descriptor the system parsed, freed when dropped.
+struct Descriptor(PSECURITY_DESCRIPTOR);
+
+impl Descriptor {
+    fn parse(sddl: &[u16]) -> Result<Self, Error> {
+        let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: `sddl` is NUL-terminated and outlives the call; the size out-pointer may be null.
+        let parsed = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &raw mut descriptor,
+                null_mut(),
+            )
+        };
+        if parsed == 0 {
+            return Err(Error::InvalidDescriptor);
+        }
+        Ok(Self(descriptor))
+    }
+}
+
+impl Drop for Descriptor {
+    fn drop(&mut self) {
+        // SAFETY: the pointer came from the parse above, allocated for LocalFree, and nothing keeps it.
+        unsafe { LocalFree(self.0.cast()) };
+    }
 }
 
 impl Instances {
@@ -453,10 +483,13 @@ impl Instances {
             max_instances: options.max_instances,
             buffer_size: options.buffer_size,
             first_instance: options.first_instance,
-            descriptor: options
-                .security_descriptor
-                .as_deref()
-                .map(wide),
+            descriptor: wide(&match &options.security_descriptor {
+                Some(sddl) => sddl.clone(),
+                None => {
+                    let user = current_user()?;
+                    format!("O:{user}D:P(A;;GA;;;{user})")
+                }
+            }),
         })
     }
 
@@ -464,13 +497,21 @@ impl Instances {
     /// instance limit reached for now.
     pub(crate) fn create(&self, first: bool) -> Result<Option<OwnedHandle>, Error> {
         let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
-        let _ = first;
-        let _ = FILE_FLAG_FIRST_PIPE_INSTANCE;
+        if first && self.first_instance {
+            open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+        }
         let mut pipe_mode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT;
-        let _ = PIPE_REJECT_REMOTE_CLIENTS;
-        let _ = &mut open_mode;
-        let _ = &mut pipe_mode;
-        // SAFETY: `path` is NUL-terminated and outlives the call; null attributes mean the default.
+        if !self.remote_clients {
+            pipe_mode |= PIPE_REJECT_REMOTE_CLIENTS;
+        }
+        let descriptor = Descriptor::parse(&self.descriptor)?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.0,
+            bInheritHandle: 0,
+        };
+        // SAFETY: `path` is NUL-terminated, and it, `attributes` and the descriptor it points to
+        // outlive the call.
         let handle = unsafe {
             CreateNamedPipeW(
                 self.path.as_ptr(),
@@ -480,7 +521,7 @@ impl Instances {
                 self.buffer_size,
                 self.buffer_size,
                 0,
-                null(),
+                &raw const attributes,
             )
         };
         if handle != INVALID_HANDLE_VALUE {
@@ -719,6 +760,40 @@ pub(crate) fn peer_of(handle: RawHandle, server: bool) -> OsIdentity {
     }
 }
 
+#[cfg(feature = "tokio")]
+mod tokio_pipes {
+    use std::io;
+    use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
+
+    use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
+    use windows_sys::Win32::Foundation::ERROR_NO_DATA;
+
+    use crate::identity::OsIdentity;
+
+    /// A server instance handed to tokio.
+    pub(crate) fn server_from(instance: OwnedHandle) -> io::Result<NamedPipeServer> {
+        // SAFETY: `instance` is an overlapped byte-mode pipe server this function owns, as tokio asks.
+        unsafe { NamedPipeServer::from_raw_handle(instance.into_raw_handle()) }
+    }
+
+    /// A client's end handed to tokio.
+    pub(crate) fn client_from(handle: OwnedHandle) -> io::Result<NamedPipeClient> {
+        // SAFETY: `handle` is an overlapped pipe client this function owns, as tokio asks.
+        unsafe { NamedPipeClient::from_raw_handle(handle.into_raw_handle()) }
+    }
+
+    /// A client that connected and left before `connect` looked; a read will see its end.
+    pub(crate) fn is_client_gone(error: &io::Error) -> bool {
+        error.raw_os_error() == Some(ERROR_NO_DATA as i32)
+    }
+
+    pub(crate) fn peer_of_tokio(pipe: &impl AsRawHandle, server: bool) -> OsIdentity {
+        super::peer_of(pipe.as_raw_handle(), server)
+    }
+}
+#[cfg(feature = "tokio")]
+pub(crate) use tokio_pipes::*;
+
 /// The host a remote client came from; a local one has none.
 fn client_host(server: HANDLE) -> Option<String> {
     let mut name = [0u16; 256];
@@ -727,9 +802,11 @@ fn client_host(server: HANDLE) -> Option<String> {
         GetNamedPipeClientComputerNameW(server, name.as_mut_ptr(), size_of_val(&name) as u32)
     };
     if got == 0 {
-        debug_assert!(last_error() != 0 || ERROR_PIPE_LOCAL != 0);
         return None;
     }
-    let length = name.iter().position(|unit| *unit == 0).unwrap_or(name.len());
+    let length = name
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(name.len());
     Some(String::from_utf16_lossy(&name[..length]))
 }
