@@ -1,0 +1,20 @@
+# Dotfiles are opt-in.
+/.*
+!/.gitignore
+!/.gitattributes
+!/.github/
+
+# Agent config and personal overrides, at any depth.
+.agents
+CLAUDE*
+.claude
+*.local.*
+
+# Rust
+/target/
+
+# Docs build
+/site/
+
+# A library does not commit its lockfile.
+/Cargo.lock
