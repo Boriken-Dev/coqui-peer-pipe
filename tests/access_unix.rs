@@ -324,7 +324,12 @@ fn a_full_queue_makes_a_client_wait_up_to_its_timeout() {
         }
         assert!(held.len() < 4096, "the backlog bounds the queue");
     };
-    assert!(matches!(error, Error::TimedOut), "{error:?}");
+    // FreeBSD 14.5 refuses a connect to a full queue where Linux makes it wait.
+    if cfg!(target_os = "freebsd") {
+        assert!(matches!(error, Error::NotListening), "{error:?}");
+    } else {
+        assert!(matches!(error, Error::TimedOut), "{error:?}");
+    }
 }
 
 /// Re-runs this test binary as uid 65534, from a copy any user can execute, connecting to `path`:

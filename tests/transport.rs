@@ -357,12 +357,12 @@ fn each_end_reports_the_other_as_this_user_and_this_process() {
     let seen_by_server = server.peer().unwrap();
     assert_eq!(seen_by_server.user.as_deref(), Some(me.as_str()));
     assert_eq!(seen_by_server.is_current_user().unwrap(), Some(true));
-    assert_eq!(seen_by_server.process, Some(std::process::id()));
+    assert_eq!(seen_by_server.process, support::expected_process());
     assert_eq!(seen_by_server.host, None);
 
     let seen_by_client = client.peer().unwrap();
     assert_eq!(seen_by_client.user.as_deref(), Some(me.as_str()));
-    assert_eq!(seen_by_client.process, Some(std::process::id()));
+    assert_eq!(seen_by_client.process, support::expected_process());
 }
 
 #[test]

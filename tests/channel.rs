@@ -53,7 +53,7 @@ fn messages_cross_in_order_both_ways() {
     }
     server.send(b"answer").unwrap();
     assert_eq!(client.receive(WAIT).unwrap().unwrap(), b"answer");
-    assert_eq!(server.peer().unwrap().process, Some(std::process::id()));
+    assert_eq!(server.peer().unwrap().process, support::expected_process());
 }
 
 #[test]

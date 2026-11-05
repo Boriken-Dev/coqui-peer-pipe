@@ -150,7 +150,7 @@ async fn each_end_reports_the_other() {
     let me = current_user().unwrap();
     let seen = server.peer().unwrap();
     assert_eq!(seen.user.as_deref(), Some(me.as_str()));
-    assert_eq!(seen.process, Some(std::process::id()));
+    assert_eq!(seen.process, support::expected_process());
     assert_eq!(client.peer().unwrap().user.as_deref(), Some(me.as_str()));
 }
 

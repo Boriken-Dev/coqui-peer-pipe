@@ -32,6 +32,11 @@ pub fn place(tag: &str) -> Place {
     }
 }
 
+/// What a peer's identity says of this process: FreeBSD's `getpeereid` gives no process.
+pub fn expected_process() -> Option<u32> {
+    (!cfg!(target_os = "freebsd")).then(std::process::id)
+}
+
 /// A new directory only its owner can use. Kept short: a socket path has a small limit.
 pub fn private_directory() -> tempfile::TempDir {
     tempfile::Builder::new()
