@@ -1,0 +1,110 @@
+name: Test
+
+# On demand: workflow_dispatch (optionally at a ref), or a pushed "ci-*" tag, which is
+# throwaway and deleted after its run. Not run on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to test (branch, tag, or SHA)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to test (branch, tag, or SHA)"
+        type: string
+        required: false
+        default: ""
+  push:
+    tags:
+      - "ci-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The committed public API, so a change to it is seen in review. Regenerate with:
+  # cargo +nightly-2026-09-21 public-api --all-features -sss --color never > tools/public-api.txt
+  public-api:
+    name: Public API snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      # cargo-public-api 0.52 reads the rustdoc JSON of this nightly.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-21
+      - name: Install cargo-public-api
+        run: cargo +stable install cargo-public-api --version 0.52.0 --locked
+      - name: Compare with tools/public-api.txt
+        run: |
+          cargo +nightly-2026-09-21 public-api --all-features -sss --color never > "$RUNNER_TEMP/public-api.txt"
+          diff -u tools/public-api.txt "$RUNNER_TEMP/public-api.txt"
+
+  rust:
+    name: Rust (${{ matrix.os }}, Rust ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [stable, "1.89"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+        if: matrix.toolchain == 'stable'
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      # The tests that become another user need root.
+      - name: Tests that need root
+        if: runner.os != 'Windows'
+        run: |
+          binary=$(cargo test --all-features --test access_unix --no-run --message-format=json \
+            | python3 -c 'import json,sys; print([m["executable"] for m in map(json.loads, sys.stdin) if m.get("executable")][-1])')
+          sudo "$binary" --ignored --test-threads=1
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  features:
+    name: Features (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        name: ["none", "tokio", "channel"]
+        include:
+          - name: "none"
+            flags: "--no-default-features"
+          - name: "tokio"
+            flags: "--no-default-features --features tokio"
+          - name: "channel"
+            flags: "--no-default-features --features channel"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets ${{ matrix.flags }} -- -D warnings
+      - run: cargo test ${{ matrix.flags }}
