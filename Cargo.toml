@@ -53,7 +53,7 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(unix)'.dependencies]
 # Connecting without blocking and a chosen backlog, which std's UnixListener and UnixStream do not offer.
-socket2 = { version = "0.6", default-features = false }
+socket2 = { version = "0.6", default-features = false, features = ["all"] }
 # The peer's credentials, the effective user and waiting on a listener, which neither std nor socket2 has.
 libc = { version = "0.2", default-features = false }
 

@@ -31,6 +31,7 @@ pub(crate) struct Decoder {
 
 impl Decoder {
     /// Whether no part of a frame has arrived, so a stream ending here ended in order.
+    #[cfg(feature = "channel")]
     pub(crate) fn is_idle(&self) -> bool {
         self.length.is_none() && self.filled == 0
     }
