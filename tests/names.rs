@@ -141,19 +141,19 @@ mod unix {
 
     #[test]
     fn a_name_in_a_directory_is_a_socket_path() {
-        let name = PipeName::named_in("/run/canoa", "jose").unwrap();
-        assert_eq!(name.path().to_str().unwrap(), "/run/canoa/jose.sock");
-        assert_eq!(name.to_string(), "unix:/run/canoa/jose.sock");
+        let name = PipeName::named_in("/run/app", "user").unwrap();
+        assert_eq!(name.path().to_str().unwrap(), "/run/app/user.sock");
+        assert_eq!(name.to_string(), "unix:/run/app/user.sock");
     }
 
     #[test]
     fn every_documented_spelling_parses() {
-        let name = PipeName::at("/run/canoa/jose.sock").unwrap();
+        let name = PipeName::at("/run/app/user.sock").unwrap();
         assert_eq!(
-            "unix:/run/canoa/jose.sock".parse::<PipeName>().unwrap(),
+            "unix:/run/app/user.sock".parse::<PipeName>().unwrap(),
             name
         );
-        assert_eq!("/run/canoa/jose.sock".parse::<PipeName>().unwrap(), name);
+        assert_eq!("/run/app/user.sock".parse::<PipeName>().unwrap(), name);
         assert!(matches!(
             r"\\.\pipe\x".parse::<PipeName>(),
             Err(Error::InvalidName)
