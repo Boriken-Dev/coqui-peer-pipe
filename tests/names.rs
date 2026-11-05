@@ -149,10 +149,7 @@ mod unix {
     #[test]
     fn every_documented_spelling_parses() {
         let name = PipeName::at("/run/app/user.sock").unwrap();
-        assert_eq!(
-            "unix:/run/app/user.sock".parse::<PipeName>().unwrap(),
-            name
-        );
+        assert_eq!("unix:/run/app/user.sock".parse::<PipeName>().unwrap(), name);
         assert_eq!("/run/app/user.sock".parse::<PipeName>().unwrap(), name);
         assert!(matches!(
             r"\\.\pipe\x".parse::<PipeName>(),
