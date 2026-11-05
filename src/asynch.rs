@@ -308,7 +308,7 @@ pub struct Messages<S> {
 }
 
 impl<S> Messages<S> {
-    /// Messages over `io`, each at most [`DEFAULT_MAX_MESSAGE`](crate::DEFAULT_MAX_MESSAGE) bytes.
+    /// Messages over `io`, each at most [`DEFAULT_MAX_MESSAGE`] bytes.
     #[must_use]
     pub fn new(io: S) -> Self {
         Self {

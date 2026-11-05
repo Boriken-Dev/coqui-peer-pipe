@@ -203,7 +203,10 @@ async fn a_send_cancelled_after_it_began_refuses_every_later_send() {
             break;
         }
     }
-    assert!(cancelled, "the peer reads nothing, so these cannot all finish");
+    assert!(
+        cancelled,
+        "the peer reads nothing, so these cannot all finish"
+    );
     assert_eq!(
         messages.send(b"x").await.unwrap_err().kind(),
         std::io::ErrorKind::BrokenPipe

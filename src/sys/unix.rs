@@ -20,6 +20,9 @@ use crate::identity::OsIdentity;
 use crate::name::PipeName;
 use crate::options::{ConnectOptions, ListenerOptions};
 
+/// One write at most. Linux applies a socket's send timeout to each wait for buffer room, so one large
+/// write to a peer reading slowly outlasts it many times over (32 MiB, 300 ms: 3 s and more).
+const MAX_WRITE: usize = 64 * 1024;
 /// How often a connect looks again at a queue with no room.
 const FULL_QUEUE_POLL: Duration = Duration::from_millis(5);
 /// Group and other write bits.
@@ -74,7 +77,8 @@ impl Stream {
     }
 
     pub(crate) fn write(&self, buffer: &[u8]) -> io::Result<usize> {
-        (&self.socket).write(buffer).map_err(one_timeout)
+        let chunk = &buffer[..buffer.len().min(MAX_WRITE)];
+        (&self.socket).write(chunk).map_err(one_timeout)
     }
 
     pub(crate) fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {

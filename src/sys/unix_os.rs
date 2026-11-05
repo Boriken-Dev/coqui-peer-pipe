@@ -1,8 +1,8 @@
 //! The three things std and socket2 do not offer on a Unix socket.
 
+use core::time::Duration;
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
-use std::time::Duration;
 
 /// The effective user of this process.
 pub(crate) fn effective_user() -> u32 {
