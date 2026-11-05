@@ -33,3 +33,7 @@ pub use options::{
     DEFAULT_IO_TIMEOUT, DEFAULT_SOCKET_MODE, ListenerOptions,
 };
 pub use stream::Stream;
+
+#[cfg(feature = "tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
+pub mod asynch;
