@@ -42,14 +42,17 @@ impl PipeName {
 ```
 
 `name` is one or more of `A-Z a-z 0-9 . _ -` and does not start with a dot. `at` on Windows takes a `NAME`
-that may group with `\`, without `/`, a control character, or a `.` or `..` part, and is `Error::InvalidName`
-otherwise. `at` on Unix refuses an empty path, one with no file name, or one too long for `sun_path`, counting
+that may group with `\`, without `/`, a control character, a `.` or `..` part, or a part ending in a dot or a
+space (which Win32 would drop, giving one pipe two names), and a `HOST` that is `.` or holds only
+`A-Z a-z 0-9 . - : _ [ ] %`; anything else is `Error::InvalidName`. `at` on Unix refuses an empty path, one with no file name, or one too long for `sun_path`, counting
 the 11 bytes a bind's private directory adds. On Windows a name is held in ASCII lower case, since the system
 compares them without case: two cases are one equal value.
 
-Text: `pipe:NAME` (`pipe:GROUP\NAME` on Windows), `unix:PATH`, or a whole path (`\\` on Windows, `/` on Unix).
-`Display` is canonical and parses back, but for a Unix path that is not UTF-8. `unix:` on Windows is
-`Error::Unsupported`.
+Text: `pipe:NAME` (on Windows any `NAME` `at` takes, `GROUP\NAME` included), `unix:PATH`, or a whole path (`\\.\`
+on Windows, `/` on Unix). **Text never names another host**: `\\HOST\pipe\NAME` is `Error::InvalidName` from
+`FromStr`, since opening it sends this user's credentials to that host; `at` and `on_host` name one on purpose.
+`Display` is canonical and parses back, but for a Unix path that is not UTF-8 and another host's pipe. `unix:`
+on Windows is `Error::Unsupported`.
 
 Environment: the first of `XDG_RUNTIME_DIR` and `TMPDIR` that holds an absolute path; neither is
 `Error::NoRuntimeDirectory`. The bind then judges that directory like any other, so `TMPDIR=/tmp` is
@@ -91,18 +94,24 @@ pub const DEFAULT_BACKLOG: i32;              // 128
 pub const DEFAULT_SOCKET_MODE: u32;          // 0o600
 ```
 
-**On Windows**, `bind` creates the first instance with the descriptor `O:<SID>D:P(A;;GA;;;<SID>)`, for the
-user this thread runs as, or `security_descriptor`. A name that exists is `Error::NameTaken` (the system's
-`ERROR_ACCESS_DENIED`), whoever made it. One instance always waits for the next client, and the next is made
-before a client is taken, so the name is never free while the listener lives. Callers of `accept` on one
-listener wait in turn. Clients through file sharing (`\\HOST\pipe\NAME`) are refused unless
+**On Windows**, `bind` creates the first instance and the one after it with the descriptor
+`O:<SID>D:P(A;;GA;;;<SID>)`, for the user this thread runs as, plus, when its token is above medium integrity
+(elevated), the label `S:(ML;;NWNRNX;;;<its level>)`, so a process of the same user below that level (not
+elevated, or sandboxed) can neither connect nor add instances. `security_descriptor` replaces all of it: no label
+is added, a text with no DACL gets the token's default DACL, a NUL in it is `Error::InvalidDescriptor`, and so is
+one that does not let this user add instances (seen at `bind`). A name that exists is `Error::NameTaken` (the
+system's `ERROR_ACCESS_DENIED`), whoever made it; with `first_instance(false)` the pipe joined keeps its own
+descriptor. One instance always waits for the next client, and the next is made before a client is taken, so the
+name is never free while the listener lives. Callers of `accept` on one listener wait in turn, and
+`accept_timeout`'s bound covers that wait. Clients through file sharing (`\\HOST\pipe\NAME`) are refused unless
 `allow_remote_clients`, and reach the system's own check as well: the descriptor applies to them too.
 
 **On Unix**, `bind`, in this order:
 
-1. resolves the parent directory and refuses (`Error::SharedDirectory`) when others can write it, sticky or not,
-   or when others can write a directory above it that is not sticky; refuses (`Error::ForeignDirectory`) when
-   a user other than this one or root owns any of them. `allow_shared_directory` skips this;
+1. judges the parent directory, both as written (not following links, since clients open that name) and resolved:
+   refuses (`Error::SharedDirectory`) when others can write the socket's directory, sticky or not, or a directory
+   above it that is not sticky; refuses (`Error::ForeignDirectory`) when a user other than this one or root owns
+   any of them, or a link on the way as written. `allow_shared_directory` skips this;
 2. takes an advisory lock on `<path>.lock` (mode `0600`, no symbolic link followed), held as long as the listener:
    already held is `Error::NameTaken`. The file stays when the listener ends;
 3. looks at the path, not following a link. Not a socket is `Error::NotASocket`, and it is left alone. A socket
@@ -140,6 +149,10 @@ impl ConnectOptions {
 `connect` errors: `NotListening` (at once), `AccessDenied` (this user or, through file sharing, this client),
 `TimedOut`, `Io`. Nothing proves who listens: run a key proof over the stream.
 
+Every duration in this crate, options and calls alike, that is too long for the clock (`Duration::MAX`) waits as
+`None` would. On Unix a write to a peer that left is `BrokenPipe` and never raises SIGPIPE, whatever the
+process's disposition (`MSG_NOSIGNAL`, `SO_NOSIGPIPE` on Apple's systems).
+
 A read past its timeout is `TimedOut`, on both platforms, and loses nothing. `Ok(0)` is the peer's end, and what
 the peer wrote before closing is read first. `flush` does nothing: a write is on its way when it returns. A
 timeout of zero is `InvalidInput`, as on a socket; `None` waits forever. **A write past its timeout on Windows
@@ -176,6 +189,7 @@ and session from the pipe, its user from its token, read on a thread of its own 
 the client allowed. That needs at least identification: a client of another program that sent no quality of
 service and no data yet gives `user: None`, and so does one at anonymous level. A Windows client: the server's
 process and session, and the owner of the pipe object, which only its creator (or a privileged process) chooses.
+Neither says the integrity level: a sandboxed or non-elevated process of this user is reported as this user.
 
 ## Messages (`coqui_peer_pipe::Messages`)
 
@@ -259,7 +273,8 @@ impl Channel {
 ```
 
 It is not authenticated: run a key proof on it (`coqui_agentic_peer::auth::prove`, then `Sealed`) before anything
-else. `send` queues, and its writer thread writes: `Failure::Protocol` above the bound; `Failure::NoProgress` at once
+else. `send` queues, and its writer thread writes: each queued message counts its frame and 64 bytes more against
+`queued_bytes`, so many small messages are bounded as a few large ones are. `Failure::Protocol` above the bound; `Failure::NoProgress` at once
 when the queue has no room; `send_timeout` waits for room, and `Failure::Timeout` means not sent, with the channel
 going on. A peer that takes nothing for `send_limit` ends the channel with `Failure::NoProgress`. `receive` reads on the
 caller's thread, so nothing is read ahead and a slow reader holds the peer back: `Ok(None)` on an end between frames,
@@ -287,9 +302,13 @@ only when absolute.
   before any listener bound reaches the squatter: only the key proof protects it. `Stream::peer` says who owns the
   pipe.
 - Windows: `\\HOST\pipe\NAME` needs the Server service on that host. Refused and denied both come back as
-  `Error::AccessDenied`.
-- Windows: one client can wait connected to the waiting instance; another then gets the next instance or waits in
-  `connect`. There is no backlog setting.
+  `Error::AccessDenied`. Opening one is not bounded by `ConnectOptions::timeout`: the system waits for the network
+  (measured: 21 s for an address that does not answer), and the async `connect` waits on its runtime thread.
+- Windows: two clients can wait connected before an `accept`, on the waiting instance and the next; another then
+  waits in `connect` until an `accept` makes room. There is no backlog setting.
+- Unix: the bind's liveness probe takes a refused connect for a stale socket. A system that refuses a connect to a
+  full queue (FreeBSD; not measured on macOS) can therefore make another program's live, saturated socket look
+  stale; this crate's own listeners are protected by `<path>.lock`.
 - `<path>.lock` stays beside a Unix socket by design: removing it would let two binders hold locks on two files.
 - A key-proof handshake and these streams have separate bounds: the stream's 30 s read timeout ends a silent
   `drive_stream`, and `_until` then replaces it.
