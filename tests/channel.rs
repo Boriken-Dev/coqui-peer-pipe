@@ -86,14 +86,21 @@ fn closing_sends_what_is_queued_and_the_peer_reads_the_end_in_order() {
 }
 
 #[test]
-fn closing_while_the_peer_still_sends_loses_nothing_the_peer_sent_first() {
-    let (_place, _listener, client, server) = channels("linger");
-    server.send(b"last words").unwrap();
-    client.send(b"hello").unwrap();
-    assert_eq!(server.receive(WAIT).unwrap().unwrap(), b"hello");
+fn closing_with_what_the_peer_sent_unread_does_not_lose_what_was_sent_last() {
+    let (_place, _listener, client, server) = streams("linger");
+    let client = StreamChannel::builder(PeerFrame)
+        .pending(1)
+        .start(client)
+        .unwrap();
+    let server = StreamChannel::start(server, PeerFrame).unwrap();
+    for _ in 0..20 {
+        server.send(&[1; 10_000]).unwrap();
+    }
+    thread::sleep(Duration::from_millis(200));
+    client.send(b"final").unwrap();
     client.close();
+    assert_eq!(server.receive(WAIT).unwrap().unwrap(), b"final");
     assert_eq!(server.receive(WAIT), Ok(None));
-    assert_eq!(client.receive(WAIT).unwrap().unwrap(), b"last words");
 }
 
 #[test]
@@ -105,7 +112,14 @@ fn closing_wakes_a_blocked_receive_and_can_be_repeated() {
         thread::spawn(move || client.receive(None))
     };
     thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
     client.close();
+    // The reader is woken by the stream's shutdown, so no thread is waited for up to the send limit.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
     client.close();
     assert_eq!(waiting.join().unwrap(), Ok(None));
     assert_eq!(client.send(b"x"), Err(Failure::PathLost));
@@ -192,18 +206,28 @@ fn the_connector_and_the_listener_traits_give_streams_a_channel_runs_on() {
 fn the_connector_gives_its_timeout_to_the_connect() {
     use coqui_transport::Connector as _;
 
-    let place = place("nobody");
+    // Nothing accepts, so the queue fills (on Windows, the instances) and a connect waits for room.
+    let place = place("full");
+    let _listener = Listener::options().backlog(1).bind(&place.name).unwrap();
     let connector = Connector::new(place.name.clone());
-    let started = Instant::now();
-    let error = connector.connect(Duration::from_millis(300)).unwrap_err();
-    assert!(
-        matches!(
-            error,
-            coqui_transport_pipe::Error::NotListening | coqui_transport_pipe::Error::TimedOut
-        ),
-        "{error:?}"
-    );
-    assert!(started.elapsed() < Duration::from_secs(4));
+    let mut held = Vec::new();
+    for _ in 0..300 {
+        let started = Instant::now();
+        match connector.connect(Duration::from_millis(300)) {
+            Ok(stream) => held.push(stream),
+            Err(error) => {
+                assert!(
+                    matches!(error, coqui_transport_pipe::Error::TimedOut),
+                    "{error:?}"
+                );
+                let waited = started.elapsed();
+                assert!(waited >= Duration::from_millis(250), "{waited:?}");
+                assert!(waited < Duration::from_secs(4), "{waited:?}");
+                return;
+            }
+        }
+    }
+    panic!("the queue never filled");
 }
 
 fn hex(bytes: &[u8]) -> String {
