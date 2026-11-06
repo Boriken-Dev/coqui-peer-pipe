@@ -10,8 +10,8 @@ use coqui_peer::asynch::{
 };
 use coqui_peer::{DriveError, Method};
 use coqui_peer_noise::{Identity as NoiseIdentity, Noise, Trust as NoiseTrust};
-use coqui_peer_pipe::asynch::{Listener, Messages, Stream};
-use coqui_peer_pipe::{Error, current_user};
+use coqui_transport_pipe::asynch::{Listener, Messages, Stream};
+use coqui_transport_pipe::{Error, current_user};
 use coqui_peer_tls::{Identity as TlsIdentity, Pins, Tls, Trust as TlsTrust};
 use support::place;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -99,7 +99,7 @@ async fn the_blocking_and_async_forms_talk_to_each_other() {
     let name = place.name.clone();
     let client = tokio::task::spawn_blocking(move || {
         use std::io::{Read, Write};
-        let mut client = coqui_peer_pipe::Stream::connect(&name).unwrap();
+        let mut client = coqui_transport_pipe::Stream::connect(&name).unwrap();
         client.write_all(b"x").unwrap();
         let mut byte = [0];
         client.read_exact(&mut byte).unwrap();
@@ -117,7 +117,7 @@ async fn a_second_listener_is_refused() {
     let _listener = Listener::bind(&place.name).unwrap();
     assert!(matches!(Listener::bind(&place.name), Err(Error::NameTaken)));
     assert!(matches!(
-        coqui_peer_pipe::Listener::bind(&place.name),
+        coqui_transport_pipe::Listener::bind(&place.name),
         Err(Error::NameTaken)
     ));
 }
@@ -296,7 +296,7 @@ async fn a_deadline_is_met_on_a_silent_peer() {
 
 #[cfg(windows)]
 mod windows {
-    use coqui_peer_pipe::{ListenerOptions, PipeName, Weakening};
+    use coqui_transport_pipe::{ListenerOptions, PipeName, Weakening};
 
     use super::*;
 
@@ -344,7 +344,7 @@ mod unix {
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    use coqui_peer_pipe::PipeName;
+    use coqui_transport_pipe::PipeName;
 
     use super::*;
 

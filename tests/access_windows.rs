@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::os::windows::ffi::OsStrExt;
 use std::time::Duration;
 
-use coqui_peer_pipe::{Error, Listener, PipeName, Stream, Weakening, current_user};
+use coqui_transport_pipe::{Error, Listener, PipeName, Stream, Weakening, current_user};
 use support::place;
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
@@ -556,7 +556,7 @@ fn a_write_past_the_room_that_times_out_refuses_every_later_write() {
         .unwrap();
     let mut client = Stream::connect(&place.name).unwrap();
     let mut server = listener.accept().unwrap();
-    coqui_peer_pipe::WriteTimeout::set_write_timeout(&client, Some(Duration::from_millis(100)))
+    coqui_transport_pipe::WriteTimeout::set_write_timeout(&client, Some(Duration::from_millis(100)))
         .unwrap();
     let data = vec![7; 60_000];
     let error = client.write(&data).unwrap_err();
@@ -566,7 +566,7 @@ fn a_write_past_the_room_that_times_out_refuses_every_later_write() {
     // Reading still works: only this direction's position is unknown.
     server.write_all(b"y").unwrap();
     let mut byte = [0];
-    coqui_peer_pipe::ReadTimeout::set_read_timeout(&client, Some(Duration::from_secs(5))).unwrap();
+    coqui_transport_pipe::ReadTimeout::set_read_timeout(&client, Some(Duration::from_secs(5))).unwrap();
     client.read_exact(&mut byte).unwrap();
     assert_eq!(&byte, b"y");
 }

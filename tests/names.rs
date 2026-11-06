@@ -3,7 +3,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use coqui_peer_pipe::{Error, PipeName};
+use coqui_transport_pipe::{Error, PipeName};
 
 fn hash_of(name: &PipeName) -> u64 {
     let mut hasher = DefaultHasher::new();

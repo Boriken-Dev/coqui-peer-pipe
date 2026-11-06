@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use coqui_peer_pipe::{
+use coqui_transport_pipe::{
     ConnectOptions, Error, Listener, ListenerOptions, MessageTransport, Messages, ReadTimeout,
     Stream, WriteTimeout, current_user,
 };

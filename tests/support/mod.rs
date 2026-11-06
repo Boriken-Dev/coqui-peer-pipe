@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use coqui_peer_pipe::PipeName;
+use coqui_transport_pipe::PipeName;
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
 

@@ -1,11 +1,11 @@
-# Contributing to coqui-peer-pipe
+# Contributing to coqui-transport-pipe
 
 ## Licence
 
 This project is distributed under the **Mozilla Public License 2.0** (`LICENSE`). Its
 copyleft is per file:
 
-- **Using coqui-peer-pipe imposes nothing on your code.** Depend on the crate and ship a
+- **Using coqui-transport-pipe imposes nothing on your code.** Depend on the crate and ship a
   closed-source application. The only obligation is that this crate's own source stays
   available to the people you ship it to, which it is, here.
 - **Changing this crate's files does carry an obligation.** A modified file must be published

@@ -1,9 +1,9 @@
-# `coqui-peer-pipe` — API header
+# `coqui-transport-pipe` — API header
 
-Header-file-style reference for the `coqui-peer-pipe` crate: every public item with its signature,
+Header-file-style reference for the `coqui-transport-pipe` crate: every public item with its signature,
 contract and gotchas, so the crate can be used without reading its source. It ships inside the
 package and is self-contained. Development documentation lives with the source at
-<https://github.com/Boriken-Dev/coqui-peer-pipe>.
+<https://github.com/Boriken-Dev/coqui-transport-pipe>.
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
@@ -28,7 +28,7 @@ variable unless the caller asks: `PipeName::named` and parsing `pipe:NAME` read 
 Tested on Windows, Linux and FreeBSD (14.5: `getpeereid`, which gives no process there). The macOS path (`getpeereid`, `LOCAL_PEERPID`) is written and has not been
 run.
 
-## Names (`coqui_peer_pipe::PipeName`)
+## Names (`coqui_transport_pipe::PipeName`)
 
 ```rust
 pub struct PipeName;   // Clone, Debug, Eq, Hash, Display, FromStr, AsRef<Path>, Send, Sync
@@ -58,7 +58,7 @@ Environment: the first of `XDG_RUNTIME_DIR` and `TMPDIR` that holds an absolute 
 `Error::NoRuntimeDirectory`. The bind then judges that directory like any other, so `TMPDIR=/tmp` is
 refused.
 
-## Listening (`coqui_peer_pipe::{Listener, ListenerOptions}`)
+## Listening (`coqui_transport_pipe::{Listener, ListenerOptions}`)
 
 ```rust
 pub struct Listener;   // Debug, Send, Sync
@@ -122,7 +122,7 @@ name is never free while the listener lives. Callers of `accept` on one listener
 
 Dropping the listener removes the path if it is still this socket.
 
-## Streams (`coqui_peer_pipe::{Stream, ConnectOptions}`)
+## Streams (`coqui_transport_pipe::{Stream, ConnectOptions}`)
 
 ```rust
 pub struct Stream;     // Debug, Send, Sync
@@ -169,7 +169,7 @@ same.
 stream goes on. `Method::respond` takes `None` as its source, so every peer on pipes shares one
 bucket of a `TrustStore`'s waiting queue.
 
-## Who is at the other end (`coqui_peer_pipe::{OsIdentity, current_user}`)
+## Who is at the other end (`coqui_transport_pipe::{OsIdentity, current_user}`)
 
 ```rust
 #[non_exhaustive] pub struct OsIdentity {
@@ -191,7 +191,7 @@ service and no data yet gives `user: None`, and so does one at anonymous level. 
 process and session, and the owner of the pipe object, which only its creator (or a privileged process) chooses.
 Neither says the integrity level: a sandboxed or non-elevated process of this user is reported as this user.
 
-## Messages (`coqui_peer_pipe::Messages`)
+## Messages (`coqui_transport_pipe::Messages`)
 
 ```rust
 pub const DEFAULT_MAX_MESSAGE: usize;   // coqui_peer::MAX_MESSAGE, 1 MiB
@@ -222,7 +222,7 @@ out keeps what arrived for the next. A `send` that stopped inside a frame refuse
 A frame above the bound is `DriveError::Io(InvalidData)` from `drive_messages`, not `DriveError::TooLong`, which
 `coqui-peer` reserves for its own frame functions.
 
-## Async (`coqui_peer_pipe::asynch`, feature `tokio`)
+## Async (`coqui_transport_pipe::asynch`, feature `tokio`)
 
 ```rust
 pub struct Listener;
@@ -250,7 +250,7 @@ own, and the options' read and write timeouts mean nothing here: wrap a call in 
 after it began refuses every later send. `poll_shutdown` ends the writing direction on Unix and does nothing on
 Windows, where dropping the stream is the end.
 
-## Channel (`coqui_peer_pipe::channel`, feature `channel`)
+## Channel (`coqui_transport_pipe::channel`, feature `channel`)
 
 ```rust
 pub const DEFAULT_QUEUED_BYTES: usize;      // 64 MiB

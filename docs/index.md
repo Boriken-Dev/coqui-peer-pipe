@@ -1,4 +1,4 @@
-# coqui-peer-pipe
+# coqui-transport-pipe
 
 Windows named pipes and Unix domain sockets as a transport of
 [`coqui-peer`](https://github.com/Boriken-Dev/coqui-peer), so anything that runs a coqui-peer
@@ -21,6 +21,6 @@ The operating system's word on who connected is reported as information; it neve
 key proof a method runs over the stream.
 
 The API reference is under
-[Rust API](https://boriken-dev.github.io/coqui-peer-pipe/rust/index.html) for `main`. The source,
+[Rust API](https://boriken-dev.github.io/coqui-transport-pipe/rust/index.html) for `main`. The source,
 the API header (`AGENTS.md`) and the changelog are in the
-[repository](https://github.com/Boriken-Dev/coqui-peer-pipe).
+[repository](https://github.com/Boriken-Dev/coqui-transport-pipe).

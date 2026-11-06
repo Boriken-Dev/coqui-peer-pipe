@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use coqui_peer_pipe::{Listener, Stream};
+use coqui_transport_pipe::{Listener, Stream};
 use support::place;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};

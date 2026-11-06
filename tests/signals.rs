@@ -8,7 +8,7 @@ mod support;
 
 use std::io::{self, Write};
 
-use coqui_peer_pipe::{Listener, Stream};
+use coqui_transport_pipe::{Listener, Stream};
 use support::place;
 
 fn sigpipe_at_its_default() {
@@ -34,7 +34,7 @@ fn a_write_to_a_peer_that_left_is_a_broken_pipe_with_sigpipe_at_its_default() {
 #[cfg(feature = "tokio")]
 #[tokio::test]
 async fn an_async_write_to_a_peer_that_left_is_a_broken_pipe_with_sigpipe_at_its_default() {
-    use coqui_peer_pipe::asynch;
+    use coqui_transport_pipe::asynch;
     use tokio::io::AsyncWriteExt;
 
     sigpipe_at_its_default();

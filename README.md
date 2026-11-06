@@ -1,16 +1,16 @@
-# coqui-peer-pipe
+# coqui-transport-pipe
 
-[![Version](https://img.shields.io/crates/v/coqui-peer-pipe.svg)](https://crates.io/crates/coqui-peer-pipe)
-[![Rust version](https://img.shields.io/crates/msrv/coqui-peer-pipe.svg)](https://crates.io/crates/coqui-peer-pipe)
-[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-pipe/blob/main/LICENSE)
-[![Docs](https://img.shields.io/docsrs/coqui-peer-pipe)](https://docs.rs/coqui-peer-pipe)
-[![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-peer-pipe/test.yml)](https://github.com/Boriken-Dev/coqui-peer-pipe/actions/workflows/test.yml)
+[![Version](https://img.shields.io/crates/v/coqui-transport-pipe.svg)](https://crates.io/crates/coqui-transport-pipe)
+[![Rust version](https://img.shields.io/crates/msrv/coqui-transport-pipe.svg)](https://crates.io/crates/coqui-transport-pipe)
+[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/Boriken-Dev/coqui-transport-pipe/blob/main/LICENSE)
+[![Docs](https://img.shields.io/docsrs/coqui-transport-pipe)](https://docs.rs/coqui-transport-pipe)
+[![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-transport-pipe/test.yml)](https://github.com/Boriken-Dev/coqui-transport-pipe/actions/workflows/test.yml)
 
 **Windows named pipes and Unix domain sockets as a [`coqui-peer`](https://github.com/Boriken-Dev/coqui-peer)
 transport, with the operating system's access control on by default.** Every `coqui-peer` driver and every
 method runs over it unchanged, and with the `channel` feature so does a `coqui-agentic-peer` link. It proves no
 key: a method does that over the stream, and what the operating system says about the other end is reported
-beside it. See the [documentation](https://boriken-dev.github.io/coqui-peer-pipe/).
+beside it. See the [documentation](https://boriken-dev.github.io/coqui-transport-pipe/).
 
 > **Status: alpha.** `0.0.0-alpha.0` is unreleased: depend on a git revision. The API may change at any commit.
 > Tested on Windows, Linux and FreeBSD; the macOS path is written and has not been run.
@@ -32,7 +32,7 @@ beside it. See the [documentation](https://boriken-dev.github.io/coqui-peer-pipe
 ## Installation
 
 ```bash
-cargo add coqui-peer-pipe --git https://github.com/Boriken-Dev/coqui-peer-pipe
+cargo add coqui-transport-pipe --git https://github.com/Boriken-Dev/coqui-transport-pipe
 ```
 
 | Feature | Adds | Needed for | Default |
@@ -49,7 +49,7 @@ Bytes between two ends; `PipeName::named("my-service")` is the usual name:
 
 ```rust
 use std::io::{Read, Write};
-use coqui_peer_pipe::{Listener, PipeName, Stream};
+use coqui_transport_pipe::{Listener, PipeName, Stream};
 
 # let directory = tempfile::tempdir()?;
 # let name = format!("readme-bytes-{}", std::process::id());
@@ -71,7 +71,7 @@ A key proof over it, with a deadline, here by Noise:
 use std::time::{Duration, Instant};
 use coqui_peer::{Method, drive_stream_until};
 use coqui_peer_noise::{Identity, Noise, Trust};
-use coqui_peer_pipe::{Listener, PipeName, Stream};
+use coqui_transport_pipe::{Listener, PipeName, Stream};
 
 # let directory = tempfile::tempdir()?;
 # let name = format!("readme-noise-{}", std::process::id());
@@ -97,7 +97,7 @@ assert_eq!(served.join().unwrap()?, our_id);
 Looser settings are a choice, and are reported:
 
 ```rust
-use coqui_peer_pipe::Listener;
+use coqui_transport_pipe::Listener;
 
 let options = Listener::options().read_timeout(None);
 assert_eq!(options.weakened()[0].setting, "read_timeout");
@@ -107,9 +107,9 @@ assert_eq!(options.weakened()[0].setting, "read_timeout");
 
 | Module | Purpose |
 | --- | --- |
-| `coqui_peer_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `OsIdentity`, `Messages`, `Error`, and `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. |
-| `coqui_peer_pipe::asynch` | The listener, the stream and `Messages` over tokio (`tokio`). |
-| `coqui_peer_pipe::channel` | `Channel`, a `coqui_web_channel::Channel` over a stream (`channel`). |
+| `coqui_transport_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `OsIdentity`, `Messages`, `Error`, and `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. |
+| `coqui_transport_pipe::asynch` | The listener, the stream and `Messages` over tokio (`tokio`). |
+| `coqui_transport_pipe::channel` | `Channel`, a `coqui_web_channel::Channel` over a stream (`channel`). |
 
 ## Limits
 
@@ -136,11 +136,11 @@ need root; `CONTRIBUTING.md` in the repository says how.
 ### Releasing
 
 This project follows [Semantic Versioning](https://semver.org/) and keeps a
-[`CHANGELOG.md`](https://github.com/Boriken-Dev/coqui-peer-pipe/blob/main/CHANGELOG.md).
+[`CHANGELOG.md`](https://github.com/Boriken-Dev/coqui-transport-pipe/blob/main/CHANGELOG.md).
 Pushing a tag matching `v*` runs the release workflow: the tests and a strict documentation build gate a GitHub
 release, marked as a pre-release when the version has a `-` suffix. Nothing is published to crates.io while the crate
 depends on its family by git revision.
 
 ## License
 
-MPL-2.0; see [LICENSE](https://github.com/Boriken-Dev/coqui-peer-pipe/blob/main/LICENSE).
+MPL-2.0; see [LICENSE](https://github.com/Boriken-Dev/coqui-transport-pipe/blob/main/LICENSE).

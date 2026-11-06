@@ -1,13 +1,13 @@
 [package]
-name = "coqui-peer-pipe"
+name = "coqui-transport-pipe"
 version = "0.0.0-alpha.0"
 description = "Windows named pipes and Unix domain sockets as a coqui-peer transport, with the operating system's access control on by default"
 readme = "README.md"
 edition = "2024"
 rust-version = "1.89"
 license = "MPL-2.0"
-repository = "https://github.com/Boriken-Dev/coqui-peer-pipe"
-homepage = "https://boriken-dev.github.io/coqui-peer-pipe/"
+repository = "https://github.com/Boriken-Dev/coqui-transport-pipe"
+homepage = "https://boriken-dev.github.io/coqui-transport-pipe/"
 keywords = ["named-pipe", "unix-socket", "peer", "ipc", "transport"]
 categories = ["network-programming", "os"]
 exclude = [".*", "*.local.*", "/tools/"]

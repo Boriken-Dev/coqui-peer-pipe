@@ -229,7 +229,7 @@ impl Channel {
         });
         let writing = Arc::clone(&shared);
         let writer = std::thread::Builder::new()
-            .name("coqui-peer-pipe writer".into())
+            .name("coqui-transport-pipe writer".into())
             .spawn(move || writing.write_queue())?;
         Ok(Self {
             shared,

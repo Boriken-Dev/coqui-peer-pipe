@@ -10,8 +10,8 @@ use coqui_agentic_peer::auth::{Identity, Method, Proof, Sealed, Trust, prove, pr
 use coqui_agentic_peer::link::{self, Host, Options, Services};
 use coqui_agentic_peer::mux::{Limits, Mux, Side};
 use coqui_agentic_peer::peers::{Events, MemoryPeers, NoEvents, PeerRecord, PeerStore};
-use coqui_peer_pipe::channel::{Channel, ChannelOptions, DEFAULT_QUEUED_BYTES};
-use coqui_peer_pipe::{Listener, Stream};
+use coqui_transport_pipe::channel::{Channel, ChannelOptions, DEFAULT_QUEUED_BYTES};
+use coqui_transport_pipe::{Listener, Stream};
 use coqui_web_channel::{Channel as _, Failure};
 use support::place;
 

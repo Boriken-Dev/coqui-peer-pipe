@@ -11,7 +11,7 @@
 extern crate alloc;
 
 #[cfg(not(any(windows, unix)))]
-compile_error!("coqui-peer-pipe needs Windows named pipes or Unix domain sockets");
+compile_error!("coqui-transport-pipe needs Windows named pipes or Unix domain sockets");
 
 mod deadline;
 mod error;

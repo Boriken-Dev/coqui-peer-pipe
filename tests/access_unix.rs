@@ -15,7 +15,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
-use coqui_peer_pipe::{Error, Listener, PipeName, Stream, Weakening, current_user};
+use coqui_transport_pipe::{Error, Listener, PipeName, Stream, Weakening, current_user};
 use support::{place, private_directory, temp_base};
 
 fn mode(path: &Path) -> u32 {
