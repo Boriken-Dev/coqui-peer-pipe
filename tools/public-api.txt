@@ -1,0 +1,191 @@
+pub mod coqui_peer_pipe
+pub use coqui_peer_pipe::MessageTransport
+pub use coqui_peer_pipe::ReadTimeout
+pub use coqui_peer_pipe::Weakening
+pub use coqui_peer_pipe::WriteTimeout
+pub mod coqui_peer_pipe::asynch
+pub struct coqui_peer_pipe::asynch::Listener
+impl coqui_peer_pipe::asynch::Listener
+pub async fn coqui_peer_pipe::asynch::Listener::accept(&mut self) -> core::result::Result<coqui_peer_pipe::asynch::Stream, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::asynch::Listener::bind(&coqui_peer_pipe::PipeName) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::asynch::Listener::bind_with(&coqui_peer_pipe::PipeName, coqui_peer_pipe::ListenerOptions) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::asynch::Listener::name(&self) -> &coqui_peer_pipe::PipeName
+pub fn coqui_peer_pipe::asynch::Listener::weakened(&self) -> &[coqui_peer::weakening::Weakening]
+pub struct coqui_peer_pipe::asynch::Messages<S>
+impl<S> coqui_peer_pipe::asynch::Messages<S>
+pub fn coqui_peer_pipe::asynch::Messages<S>::get_ref(&self) -> &S
+pub fn coqui_peer_pipe::asynch::Messages<S>::into_inner(self) -> S
+pub fn coqui_peer_pipe::asynch::Messages<S>::max_message(&self) -> usize
+pub fn coqui_peer_pipe::asynch::Messages<S>::new(S) -> Self
+pub fn coqui_peer_pipe::asynch::Messages<S>::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
+pub fn coqui_peer_pipe::asynch::Messages<S>::with_max_message(self, usize) -> Self
+impl<S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send> coqui_peer::asynch::MessageTransport for coqui_peer_pipe::asynch::Messages<S>
+pub async fn coqui_peer_pipe::asynch::Messages<S>::recv(&mut self) -> core::io::error::Result<alloc::vec::Vec<u8>>
+pub async fn coqui_peer_pipe::asynch::Messages<S>::send(&mut self, &[u8]) -> core::io::error::Result<()>
+pub struct coqui_peer_pipe::asynch::Stream
+impl coqui_peer_pipe::asynch::Stream
+pub async fn coqui_peer_pipe::asynch::Stream::connect(&coqui_peer_pipe::PipeName) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub async fn coqui_peer_pipe::asynch::Stream::connect_with(&coqui_peer_pipe::PipeName, coqui_peer_pipe::ConnectOptions) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::asynch::Stream::peer(&self) -> core::io::error::Result<coqui_peer_pipe::OsIdentity>
+impl tokio::io::async_read::AsyncRead for coqui_peer_pipe::asynch::Stream
+pub fn coqui_peer_pipe::asynch::Stream::poll_read(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>, &mut tokio::io::read_buf::ReadBuf<'_>) -> core::task::poll::Poll<core::io::error::Result<()>>
+impl tokio::io::async_write::AsyncWrite for coqui_peer_pipe::asynch::Stream
+pub fn coqui_peer_pipe::asynch::Stream::poll_flush(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<core::io::error::Result<()>>
+pub fn coqui_peer_pipe::asynch::Stream::poll_shutdown(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<core::io::error::Result<()>>
+pub fn coqui_peer_pipe::asynch::Stream::poll_write(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>, &[u8]) -> core::task::poll::Poll<core::io::error::Result<usize>>
+pub mod coqui_peer_pipe::channel
+pub struct coqui_peer_pipe::channel::Channel
+impl coqui_peer_pipe::channel::Channel
+pub fn coqui_peer_pipe::channel::Channel::options() -> coqui_peer_pipe::channel::ChannelOptions
+pub fn coqui_peer_pipe::channel::Channel::peer(&self) -> core::io::error::Result<coqui_peer_pipe::OsIdentity>
+pub fn coqui_peer_pipe::channel::Channel::start(coqui_peer_pipe::Stream) -> core::io::error::Result<Self>
+impl coqui_web::channel::Channel for coqui_peer_pipe::channel::Channel
+pub fn coqui_peer_pipe::channel::Channel::close(&self)
+pub fn coqui_peer_pipe::channel::Channel::receive(&self, core::option::Option<core::time::Duration>) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, coqui_web::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::send(&self, &[u8]) -> core::result::Result<(), coqui_web::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::send_timeout(&self, &[u8], core::option::Option<core::time::Duration>) -> core::result::Result<(), coqui_web::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::set_max_message(&self, usize)
+pub fn coqui_peer_pipe::channel::Channel::set_max_receive(&self, usize)
+pub fn coqui_peer_pipe::channel::Channel::set_max_receive_after(&self, usize, usize) -> core::result::Result<(), coqui_web::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::set_max_send(&self, usize)
+impl core::ops::drop::Drop for coqui_peer_pipe::channel::Channel
+pub fn coqui_peer_pipe::channel::Channel::drop(&mut self)
+pub struct coqui_peer_pipe::channel::ChannelOptions
+impl coqui_peer_pipe::channel::ChannelOptions
+pub fn coqui_peer_pipe::channel::ChannelOptions::max_message(self, usize) -> Self
+pub fn coqui_peer_pipe::channel::ChannelOptions::new() -> Self
+pub fn coqui_peer_pipe::channel::ChannelOptions::queued_bytes(self, usize) -> Self
+pub fn coqui_peer_pipe::channel::ChannelOptions::send_limit(self, core::time::Duration) -> Self
+pub fn coqui_peer_pipe::channel::ChannelOptions::start(self, coqui_peer_pipe::Stream) -> core::io::error::Result<coqui_peer_pipe::channel::Channel>
+pub fn coqui_peer_pipe::channel::ChannelOptions::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
+impl core::default::Default for coqui_peer_pipe::channel::ChannelOptions
+pub fn coqui_peer_pipe::channel::ChannelOptions::default() -> Self
+pub const coqui_peer_pipe::channel::DEFAULT_QUEUED_BYTES: usize
+pub const coqui_peer_pipe::channel::DEFAULT_SEND_LIMIT: core::time::Duration
+#[non_exhaustive] pub enum coqui_peer_pipe::Error
+pub coqui_peer_pipe::Error::AccessDenied
+pub coqui_peer_pipe::Error::ForeignDirectory
+pub coqui_peer_pipe::Error::InvalidDescriptor
+pub coqui_peer_pipe::Error::InvalidName
+pub coqui_peer_pipe::Error::InvalidOptions
+pub coqui_peer_pipe::Error::Io(core::io::error::Error)
+pub coqui_peer_pipe::Error::NameTaken
+pub coqui_peer_pipe::Error::NoRuntimeDirectory
+pub coqui_peer_pipe::Error::NotASocket
+pub coqui_peer_pipe::Error::NotListening
+pub coqui_peer_pipe::Error::SharedDirectory
+pub coqui_peer_pipe::Error::TimedOut
+pub coqui_peer_pipe::Error::Unsupported
+impl core::convert::From<coqui_peer_pipe::Error> for core::io::error::Error
+pub fn core::io::error::Error::from(coqui_peer_pipe::Error) -> Self
+impl core::convert::From<core::io::error::Error> for coqui_peer_pipe::Error
+pub fn coqui_peer_pipe::Error::from(core::io::error::Error) -> Self
+impl core::error::Error for coqui_peer_pipe::Error
+pub fn coqui_peer_pipe::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Display for coqui_peer_pipe::Error
+pub fn coqui_peer_pipe::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct coqui_peer_pipe::ConnectOptions
+impl coqui_peer_pipe::ConnectOptions
+pub fn coqui_peer_pipe::ConnectOptions::allow_impersonation(self, bool) -> Self
+pub fn coqui_peer_pipe::ConnectOptions::connect(self, &coqui_peer_pipe::PipeName) -> core::result::Result<coqui_peer_pipe::Stream, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::ConnectOptions::new() -> Self
+pub fn coqui_peer_pipe::ConnectOptions::read_timeout(self, core::option::Option<core::time::Duration>) -> Self
+pub fn coqui_peer_pipe::ConnectOptions::timeout(self, core::time::Duration) -> Self
+pub fn coqui_peer_pipe::ConnectOptions::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
+pub fn coqui_peer_pipe::ConnectOptions::write_timeout(self, core::option::Option<core::time::Duration>) -> Self
+impl core::default::Default for coqui_peer_pipe::ConnectOptions
+pub fn coqui_peer_pipe::ConnectOptions::default() -> Self
+pub struct coqui_peer_pipe::Listener
+impl coqui_peer_pipe::Listener
+pub fn coqui_peer_pipe::Listener::accept(&self) -> core::result::Result<coqui_peer_pipe::Stream, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::Listener::accept_timeout(&self, core::option::Option<core::time::Duration>) -> core::result::Result<coqui_peer_pipe::Stream, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::Listener::bind(&coqui_peer_pipe::PipeName) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::Listener::name(&self) -> &coqui_peer_pipe::PipeName
+pub fn coqui_peer_pipe::Listener::options() -> coqui_peer_pipe::ListenerOptions
+pub fn coqui_peer_pipe::Listener::weakened(&self) -> &[coqui_peer::weakening::Weakening]
+pub struct coqui_peer_pipe::ListenerOptions
+impl coqui_peer_pipe::ListenerOptions
+pub fn coqui_peer_pipe::ListenerOptions::allow_remote_clients(self, bool) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::allow_shared_directory(self, bool) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::backlog(self, i32) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::bind(self, &coqui_peer_pipe::PipeName) -> core::result::Result<coqui_peer_pipe::Listener, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::ListenerOptions::buffer_size(self, u32) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::first_instance(self, bool) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::max_instances(self, u32) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::new() -> Self
+pub fn coqui_peer_pipe::ListenerOptions::read_timeout(self, core::option::Option<core::time::Duration>) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::remove_stale(self, bool) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::security_descriptor(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::socket_mode(self, u32) -> Self
+pub fn coqui_peer_pipe::ListenerOptions::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
+pub fn coqui_peer_pipe::ListenerOptions::write_timeout(self, core::option::Option<core::time::Duration>) -> Self
+impl core::default::Default for coqui_peer_pipe::ListenerOptions
+pub fn coqui_peer_pipe::ListenerOptions::default() -> Self
+pub struct coqui_peer_pipe::Messages<S>
+impl<S> coqui_peer_pipe::Messages<S>
+pub fn coqui_peer_pipe::Messages<S>::get_ref(&self) -> &S
+pub fn coqui_peer_pipe::Messages<S>::into_inner(self) -> S
+pub fn coqui_peer_pipe::Messages<S>::max_message(&self) -> usize
+pub fn coqui_peer_pipe::Messages<S>::new(S) -> Self
+pub fn coqui_peer_pipe::Messages<S>::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
+pub fn coqui_peer_pipe::Messages<S>::with_max_message(self, usize) -> Self
+impl<S: alloc::io::read::Read + core::io::write::Write + coqui_peer::drive::ReadTimeout + coqui_peer::drive::WriteTimeout> coqui_peer::drive::MessageTransport for coqui_peer_pipe::Messages<S>
+pub fn coqui_peer_pipe::Messages<S>::recv(&mut self) -> core::io::error::Result<alloc::vec::Vec<u8>>
+pub fn coqui_peer_pipe::Messages<S>::send(&mut self, &[u8]) -> core::io::error::Result<()>
+impl<S: coqui_peer::drive::ReadTimeout> coqui_peer::drive::ReadTimeout for coqui_peer_pipe::Messages<S>
+pub fn coqui_peer_pipe::Messages<S>::set_read_timeout(&self, core::option::Option<core::time::Duration>) -> core::io::error::Result<()>
+impl<S: coqui_peer::drive::WriteTimeout> coqui_peer::drive::WriteTimeout for coqui_peer_pipe::Messages<S>
+pub fn coqui_peer_pipe::Messages<S>::set_write_timeout(&self, core::option::Option<core::time::Duration>) -> core::io::error::Result<()>
+#[non_exhaustive] pub struct coqui_peer_pipe::OsIdentity
+pub coqui_peer_pipe::OsIdentity::group: core::option::Option<alloc::string::String>
+pub coqui_peer_pipe::OsIdentity::host: core::option::Option<alloc::string::String>
+pub coqui_peer_pipe::OsIdentity::process: core::option::Option<u32>
+pub coqui_peer_pipe::OsIdentity::session: core::option::Option<u32>
+pub coqui_peer_pipe::OsIdentity::user: core::option::Option<alloc::string::String>
+impl coqui_peer_pipe::OsIdentity
+pub fn coqui_peer_pipe::OsIdentity::is_current_user(&self) -> core::io::error::Result<core::option::Option<bool>>
+pub struct coqui_peer_pipe::PipeName
+impl coqui_peer_pipe::PipeName
+pub fn coqui_peer_pipe::PipeName::at(impl core::convert::AsRef<std::path::Path>) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::PipeName::named(&str) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::PipeName::named_in(impl core::convert::AsRef<std::path::Path>, &str) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::PipeName::on_host(&str, &str) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::PipeName::path(&self) -> &std::path::Path
+impl core::convert::AsRef<std::path::Path> for coqui_peer_pipe::PipeName
+pub fn coqui_peer_pipe::PipeName::as_ref(&self) -> &std::path::Path
+impl core::fmt::Display for coqui_peer_pipe::PipeName
+pub fn coqui_peer_pipe::PipeName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::str::traits::FromStr for coqui_peer_pipe::PipeName
+pub type coqui_peer_pipe::PipeName::Err = coqui_peer_pipe::Error
+pub fn coqui_peer_pipe::PipeName::from_str(&str) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub struct coqui_peer_pipe::Stream
+impl coqui_peer_pipe::Stream
+pub fn coqui_peer_pipe::Stream::connect(&coqui_peer_pipe::PipeName) -> core::result::Result<Self, coqui_peer_pipe::Error>
+pub fn coqui_peer_pipe::Stream::options() -> coqui_peer_pipe::ConnectOptions
+pub fn coqui_peer_pipe::Stream::peer(&self) -> core::io::error::Result<coqui_peer_pipe::OsIdentity>
+pub fn coqui_peer_pipe::Stream::shutdown(&self) -> core::io::error::Result<()>
+impl alloc::io::read::Read for &coqui_peer_pipe::Stream
+pub fn &coqui_peer_pipe::Stream::read(&mut self, &mut [u8]) -> core::io::error::Result<usize>
+impl alloc::io::read::Read for coqui_peer_pipe::Stream
+pub fn coqui_peer_pipe::Stream::read(&mut self, &mut [u8]) -> core::io::error::Result<usize>
+impl coqui_peer::drive::ReadTimeout for &coqui_peer_pipe::Stream
+pub fn &coqui_peer_pipe::Stream::set_read_timeout(&self, core::option::Option<core::time::Duration>) -> core::io::error::Result<()>
+impl coqui_peer::drive::ReadTimeout for coqui_peer_pipe::Stream
+pub fn coqui_peer_pipe::Stream::set_read_timeout(&self, core::option::Option<core::time::Duration>) -> core::io::error::Result<()>
+impl coqui_peer::drive::WriteTimeout for &coqui_peer_pipe::Stream
+pub fn &coqui_peer_pipe::Stream::set_write_timeout(&self, core::option::Option<core::time::Duration>) -> core::io::error::Result<()>
+impl coqui_peer::drive::WriteTimeout for coqui_peer_pipe::Stream
+pub fn coqui_peer_pipe::Stream::set_write_timeout(&self, core::option::Option<core::time::Duration>) -> core::io::error::Result<()>
+impl core::io::write::Write for &coqui_peer_pipe::Stream
+pub fn &coqui_peer_pipe::Stream::flush(&mut self) -> core::io::error::Result<()>
+pub fn &coqui_peer_pipe::Stream::write(&mut self, &[u8]) -> core::io::error::Result<usize>
+impl core::io::write::Write for coqui_peer_pipe::Stream
+pub fn coqui_peer_pipe::Stream::flush(&mut self) -> core::io::error::Result<()>
+pub fn coqui_peer_pipe::Stream::write(&mut self, &[u8]) -> core::io::error::Result<usize>
+pub const coqui_peer_pipe::DEFAULT_BACKLOG: i32
+pub const coqui_peer_pipe::DEFAULT_BUFFER_SIZE: u32
+pub const coqui_peer_pipe::DEFAULT_CONNECT_TIMEOUT: core::time::Duration
+pub const coqui_peer_pipe::DEFAULT_IO_TIMEOUT: core::time::Duration
+pub const coqui_peer_pipe::DEFAULT_MAX_MESSAGE: usize
+pub const coqui_peer_pipe::DEFAULT_SOCKET_MODE: u32
+pub fn coqui_peer_pipe::current_user() -> core::io::error::Result<alloc::string::String>
