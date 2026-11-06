@@ -104,6 +104,29 @@ fn closing_with_what_the_peer_sent_unread_does_not_lose_what_was_sent_last() {
 }
 
 #[test]
+fn closing_ends_the_write_direction_at_once() {
+    let (_place, _listener, client, server) = streams("half-close");
+    let client = StreamChannel::builder(PeerFrame)
+        .linger(Duration::from_secs(3))
+        .start(client)
+        .unwrap();
+    let server = StreamChannel::start(server, PeerFrame).unwrap();
+    let answering = thread::spawn(move || {
+        assert_eq!(server.receive(WAIT), Ok(None));
+        server.close();
+    });
+    let started = Instant::now();
+    client.close();
+    // Without the end reaching the peer, the close waits out its three seconds of quiet.
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    answering.join().unwrap();
+}
+
+#[test]
 fn closing_wakes_a_blocked_receive_and_can_be_repeated() {
     let (_place, _listener, client, _server) = channels("wake");
     let client = Arc::new(client);
