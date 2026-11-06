@@ -2,16 +2,14 @@
 
 mod support;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use coqui_transport::frame::{Codec, PeerFrame};
 use coqui_transport::{Channel, Failure, StreamChannel};
 use coqui_transport_pipe::{Connector, Listener, Stream};
-use serde_json::Value;
-use support::place;
+use support::{LengthPrefix, place};
 
 const WAIT: Option<Duration> = Some(Duration::from_secs(10));
 
@@ -30,8 +28,8 @@ fn channels(tag: &str) -> (support::Place, Listener, StreamChannel, StreamChanne
     (
         place,
         listener,
-        StreamChannel::start(client, PeerFrame).unwrap(),
-        StreamChannel::start(server, PeerFrame).unwrap(),
+        StreamChannel::start(client, LengthPrefix).unwrap(),
+        StreamChannel::start(server, LengthPrefix).unwrap(),
     )
 }
 
@@ -68,7 +66,7 @@ fn the_peer_is_asked_before_the_stream_is_given_to_a_channel() {
     let (_place, _listener, client, server) = streams("peer");
     let identity = server.peer().unwrap();
     assert_eq!(identity.process, support::expected_process());
-    let _channel = StreamChannel::start(client, PeerFrame).unwrap();
+    let _channel = StreamChannel::start(client, LengthPrefix).unwrap();
 }
 
 #[test]
@@ -88,11 +86,11 @@ fn closing_sends_what_is_queued_and_the_peer_reads_the_end_in_order() {
 #[test]
 fn closing_with_what_the_peer_sent_unread_does_not_lose_what_was_sent_last() {
     let (_place, _listener, client, server) = streams("linger");
-    let client = StreamChannel::builder(PeerFrame)
+    let client = StreamChannel::builder(LengthPrefix)
         .pending(1)
         .start(client)
         .unwrap();
-    let server = StreamChannel::start(server, PeerFrame).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix).unwrap();
     for _ in 0..20 {
         server.send(&[1; 10_000]).unwrap();
     }
@@ -106,11 +104,11 @@ fn closing_with_what_the_peer_sent_unread_does_not_lose_what_was_sent_last() {
 #[test]
 fn closing_ends_the_write_direction_at_once() {
     let (_place, _listener, client, server) = streams("half-close");
-    let client = StreamChannel::builder(PeerFrame)
+    let client = StreamChannel::builder(LengthPrefix)
         .linger(Duration::from_secs(3))
         .start(client)
         .unwrap();
-    let server = StreamChannel::start(server, PeerFrame).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix).unwrap();
     let answering = thread::spawn(move || {
         assert_eq!(server.receive(WAIT), Ok(None));
         server.close();
@@ -151,7 +149,7 @@ fn closing_wakes_a_blocked_receive_and_can_be_repeated() {
 #[test]
 fn a_peer_that_left_inside_a_frame_is_a_lost_path() {
     let (_place, _listener, client, server) = streams("torn");
-    let server = StreamChannel::start(server, PeerFrame).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix).unwrap();
     (&client).write_all(&[0, 0, 0, 9, 1, 2]).unwrap();
     drop(client);
     assert_eq!(server.receive(WAIT), Err(Failure::PathLost));
@@ -160,8 +158,8 @@ fn a_peer_that_left_inside_a_frame_is_a_lost_path() {
 #[test]
 fn a_message_above_the_receive_bound_ends_the_channel_at_both_ends() {
     let (_place, _listener, client, server) = streams("bound");
-    let client = StreamChannel::start(client, PeerFrame).unwrap();
-    let server = StreamChannel::builder(PeerFrame)
+    let client = StreamChannel::start(client, LengthPrefix).unwrap();
+    let server = StreamChannel::builder(LengthPrefix)
         .max_message(8)
         .start(server)
         .unwrap();
@@ -180,7 +178,7 @@ fn a_peer_that_takes_nothing_for_the_send_limit_ends_the_channel() {
         .buffer_size(4096)
         .bind(&place.name)
         .unwrap();
-    let client = StreamChannel::builder(PeerFrame)
+    let client = StreamChannel::builder(LengthPrefix)
         .send_limit(Duration::from_millis(200))
         .start(Stream::connect(&place.name).unwrap())
         .unwrap();
@@ -216,8 +214,8 @@ fn the_connector_and_the_listener_traits_give_streams_a_channel_runs_on() {
     let connector = Connector::new(place.name.clone());
     let client = connector.connect(Duration::from_secs(5)).unwrap();
     let server = coqui_transport::Listener::accept(&listener).unwrap();
-    let client = StreamChannel::start(client, PeerFrame).unwrap();
-    let server = StreamChannel::start(server, PeerFrame).unwrap();
+    let client = StreamChannel::start(client, LengthPrefix).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix).unwrap();
     client.send(b"through the traits").unwrap();
     assert_eq!(
         server.receive(WAIT).unwrap().unwrap(),
@@ -251,131 +249,4 @@ fn the_connector_gives_its_timeout_to_the_connect() {
         }
     }
     panic!("the queue never filled");
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
-}
-
-fn bytes(hex: &str) -> Vec<u8> {
-    (0..hex.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
-        .collect()
-}
-
-fn vectors() -> Value {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/peer_frame.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
-}
-
-fn max(case: &Value) -> usize {
-    usize::try_from(case["max"].as_u64().unwrap()).unwrap()
-}
-
-fn case_name(case: &Value) -> &str {
-    case["name"].as_str().unwrap()
-}
-
-fn flag(case: &Value, key: &str) -> bool {
-    case.get(key).and_then(Value::as_bool) == Some(true)
-}
-
-/// What a channel sends over a real pipe reaches the other end as the vector's bytes, and what it
-/// refuses reaches it not at all.
-#[test]
-fn what_a_channel_puts_on_a_pipe_is_the_vector_bytes() {
-    let vectors = vectors();
-    for case in vectors["encode"].as_array().unwrap() {
-        let (_place, _listener, mine, mut raw) = streams("wire-out");
-        let channel = StreamChannel::builder(PeerFrame)
-            .max_message(max(case))
-            .start(mine)
-            .unwrap();
-        let body = match (case.get("text"), case.get("body")) {
-            (Some(text), _) => text.as_str().unwrap().as_bytes().to_vec(),
-            (None, Some(body)) => bytes(body.as_str().unwrap()),
-            (None, None) => panic!("{}: no body", case_name(case)),
-        };
-        let sent = channel.send(&body);
-        channel.close();
-        let mut wire = Vec::new();
-        raw.read_to_end(&mut wire).unwrap();
-        if flag(case, "error") {
-            assert_eq!(sent, Err(Failure::Protocol), "{}", case_name(case));
-            assert!(wire.is_empty(), "{}", case_name(case));
-        } else {
-            assert_eq!(sent, Ok(()), "{}", case_name(case));
-            assert_eq!(
-                hex(&wire),
-                case["hex"].as_str().unwrap(),
-                "{}",
-                case_name(case)
-            );
-        }
-    }
-}
-
-/// What a channel receives from the vector's bytes, written to a real pipe in the vector's chunks,
-/// is the vector's messages, then the end it says: a failure, a torn frame, or an orderly end.
-#[test]
-fn what_a_channel_takes_off_a_pipe_is_the_vector_messages() {
-    let vectors = vectors();
-    for case in vectors["decode"].as_array().unwrap() {
-        let (_place, _listener, mine, raw) = streams("wire-in");
-        let channel = StreamChannel::builder(PeerFrame)
-            .max_message(max(case))
-            .start(mine)
-            .unwrap();
-        for chunk in case["chunks"].as_array().unwrap() {
-            (&raw).write_all(&bytes(chunk.as_str().unwrap())).unwrap();
-        }
-        drop(raw);
-        let mut got = Vec::new();
-        let end = loop {
-            match channel.receive(WAIT) {
-                Ok(Some(message)) => got.push(message),
-                other => break other,
-            }
-        };
-        let expected: Vec<Vec<u8>> = case["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|message| bytes(message.as_str().unwrap()))
-            .collect();
-        assert_eq!(got, expected, "{}", case_name(case));
-        let expected_end = if flag(case, "error") {
-            Err(Failure::Protocol)
-        } else if flag(case, "truncated") {
-            Err(Failure::PathLost)
-        } else {
-            Ok(None)
-        };
-        assert_eq!(end, expected_end, "{}", case_name(case));
-    }
-}
-
-/// The frame a pipe's `Messages` writes is the codec's, so both ends of one wire agree.
-#[test]
-fn messages_and_a_channel_share_one_wire() {
-    use coqui_transport_pipe::{MessageTransport, Messages};
-
-    let (_place, _listener, client, server) = streams("shared-wire");
-    let mut messages = Messages::new(client);
-    let channel = StreamChannel::start(server, PeerFrame).unwrap();
-    messages.send(b"from messages").unwrap();
-    assert_eq!(channel.receive(WAIT).unwrap().unwrap(), b"from messages");
-    channel.send(b"from the channel").unwrap();
-    assert_eq!(messages.recv().unwrap(), b"from the channel");
-    assert_eq!(
-        PeerFrame.encode(b"x", 8).unwrap(),
-        [0, 0, 0, 1, b'x'],
-        "the codec both use"
-    );
 }

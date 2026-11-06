@@ -5,13 +5,11 @@ mod support;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use coqui_peer::asynch::{
-    MessageTransport, drive_messages, drive_messages_until, drive_stream, drive_stream_until,
-};
+use coqui_peer::asynch::{drive_stream, drive_stream_until};
 use coqui_peer::{DriveError, Method};
 use coqui_peer_noise::{Identity as NoiseIdentity, Noise, Trust as NoiseTrust};
 use coqui_peer_tls::{Identity as TlsIdentity, Pins, Tls, Trust as TlsTrust};
-use coqui_transport_pipe::asynch::{Listener, Messages, Stream};
+use coqui_transport_pipe::asynch::{Listener, Stream};
 use coqui_transport_pipe::{Error, current_user};
 use support::place;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -44,7 +42,6 @@ fn noises() -> (Noise, Noise, coqui_peer::PeerId, coqui_peer::PeerId) {
 fn handles_are_send() {
     assert_send::<Listener>();
     assert_send::<Stream>();
-    assert_send::<Messages<Stream>>();
 }
 
 #[tokio::test]
@@ -154,65 +151,6 @@ async fn each_end_reports_the_other() {
     assert_eq!(client.peer().unwrap().user.as_deref(), Some(me.as_str()));
 }
 
-#[tokio::test]
-async fn messages_cross_and_a_cancelled_receive_keeps_what_arrived() {
-    let (_place, _listener, mut client, server) = pair("messages").await;
-    let mut messages = Messages::new(server);
-    client.write_all(b"\x00\x00\x00\x04ab").await.unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), messages.recv())
-            .await
-            .is_err()
-    );
-    client.write_all(b"cd").await.unwrap();
-    assert_eq!(messages.recv().await.unwrap(), b"abcd");
-}
-
-#[tokio::test]
-async fn a_frame_above_the_bound_is_refused_by_both_ends() {
-    let (_place, _listener, client, server) = pair("oversize").await;
-    let mut small = Messages::new(client).with_max_message(4);
-    assert_eq!(
-        small.send(b"too long").await.unwrap_err().kind(),
-        std::io::ErrorKind::InvalidInput
-    );
-    let mut large = Messages::new(server);
-    large.send(b"too long").await.unwrap();
-    for _ in 0..2 {
-        assert_eq!(
-            small.recv().await.unwrap_err().kind(),
-            std::io::ErrorKind::InvalidData
-        );
-    }
-    assert!(large.weakened().is_empty());
-}
-
-#[tokio::test]
-async fn a_send_cancelled_after_it_began_refuses_every_later_send() {
-    let (_place, _listener, client, _server) = pair("cancel-send").await;
-    let mut messages = Messages::new(client).with_max_message(16 * 1024 * 1024);
-    let big = vec![0; 16 * 1024 * 1024];
-    // tokio's named pipe holds one write in a buffer of its own, so the first send may finish.
-    let mut cancelled = false;
-    for _ in 0..4 {
-        if tokio::time::timeout(Duration::from_millis(100), messages.send(&big))
-            .await
-            .is_err()
-        {
-            cancelled = true;
-            break;
-        }
-    }
-    assert!(
-        cancelled,
-        "the peer reads nothing, so these cannot all finish"
-    );
-    assert_eq!(
-        messages.send(b"x").await.unwrap_err().kind(),
-        std::io::ErrorKind::BrokenPipe
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn noise_proves_both_keys_over_a_stream() {
     let (initiator, responder, id_a, id_b) = noises();
@@ -224,29 +162,6 @@ async fn noise_proves_both_keys_over_a_stream() {
             .peer
     });
     let dialled = drive_stream(initiator.initiate().unwrap(), &mut client)
-        .await
-        .unwrap()
-        .peer;
-    assert_eq!(dialled, id_b);
-    assert_eq!(answering.await.unwrap(), id_a);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn noise_proves_both_keys_over_messages_under_a_deadline() {
-    let (initiator, responder, id_a, id_b) = noises();
-    let (_place, _listener, client, server) = pair("noise-messages").await;
-    let until = Instant::now() + Duration::from_secs(30);
-    let answering = tokio::spawn(async move {
-        drive_messages_until(
-            responder.respond(None).unwrap(),
-            &mut Messages::new(server),
-            until,
-        )
-        .await
-        .unwrap()
-        .peer
-    });
-    let dialled = drive_messages(initiator.initiate().unwrap(), &mut Messages::new(client))
         .await
         .unwrap()
         .peer;
@@ -371,16 +286,16 @@ mod unix {
 #[tokio::test]
 async fn an_async_stream_channel_runs_on_the_stream_through_the_connector() {
     use coqui_transport::asynch::{AsyncChannel, AsyncConnector, StreamChannel};
-    use coqui_transport::frame::PeerFrame;
     use coqui_transport_pipe::asynch::Connector;
+    use support::LengthPrefix;
 
     let place = place("async-channel");
     let mut listener = Listener::bind(&place.name).unwrap();
     let connector = Connector::new(place.name.clone());
     let client = connector.connect(Duration::from_secs(5)).await.unwrap();
     let server = listener.accept().await.unwrap();
-    let client = StreamChannel::new(client, PeerFrame);
-    let server = StreamChannel::new(server, PeerFrame);
+    let client = StreamChannel::new(client, LengthPrefix);
+    let server = StreamChannel::new(server, LengthPrefix);
     client.send(b"over a pipe").await.unwrap();
     let wait = Some(Duration::from_secs(10));
     assert_eq!(server.receive(wait).await.unwrap().unwrap(), b"over a pipe");

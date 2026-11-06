@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use coqui_transport_pipe::{
-    ConnectOptions, Error, Listener, ListenerOptions, MessageTransport, Messages, ReadTimeout,
-    Stream, WriteTimeout, current_user,
+    ConnectOptions, Error, Listener, ListenerOptions, ReadTimeout, Stream, WriteTimeout,
+    current_user,
 };
 use support::place;
 
@@ -309,48 +309,6 @@ fn connecting_where_nothing_listens_fails_at_once() {
 }
 
 #[test]
-fn messages_cross_a_stream() {
-    let (_place, _listener, client, server) = pair("messages");
-    let mut server = Messages::new(server);
-    let sender = thread::spawn(move || {
-        let mut client = Messages::new(client);
-        client.send(b"first").unwrap();
-        client.send(b"").unwrap();
-        client.send(&vec![9; 300_000]).unwrap();
-    });
-    assert_eq!(server.recv().unwrap(), b"first");
-    assert_eq!(server.recv().unwrap(), b"");
-    assert_eq!(server.recv().unwrap().len(), 300_000);
-    sender.join().unwrap();
-}
-
-#[test]
-fn a_message_above_the_bound_is_refused_by_both_ends() {
-    let (_place, _listener, client, server) = pair("oversize");
-    let mut small = Messages::new(client).with_max_message(4);
-    assert_eq!(
-        small.send(b"too long").unwrap_err().kind(),
-        io::ErrorKind::InvalidInput
-    );
-    let mut large = Messages::new(server);
-    large.send(b"too long").unwrap();
-    assert_eq!(small.recv().unwrap_err().kind(), io::ErrorKind::InvalidData);
-}
-
-#[test]
-fn a_receive_interrupted_by_a_timeout_goes_on_over_a_real_stream() {
-    let (_place, _listener, mut client, server) = pair("resume");
-    server
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
-    let mut server = Messages::new(server);
-    client.write_all(b"\x00\x00\x00\x04ab").unwrap();
-    assert_eq!(server.recv().unwrap_err().kind(), io::ErrorKind::TimedOut);
-    client.write_all(b"cd").unwrap();
-    assert_eq!(server.recv().unwrap(), b"abcd");
-}
-
-#[test]
 fn each_end_reports_the_other_as_this_user_and_this_process() {
     let (_place, _listener, client, server) = pair("identity");
     let me = current_user().unwrap();
@@ -427,17 +385,7 @@ fn a_bound_too_long_for_the_clock_waits_as_none_would() {
     let mut buffer = [0; 4];
     server.read_exact(&mut buffer).unwrap();
     assert_eq!(&buffer, b"late");
-    let mut client = writer.join().unwrap();
-
-    let mut messages = Messages::new(server);
-    messages.set_read_timeout(Some(Duration::MAX)).unwrap();
-    messages.set_write_timeout(Some(Duration::MAX)).unwrap();
-    client.write_all(b"\x00\x00\x00\x01x").unwrap();
-    assert_eq!(messages.recv().unwrap(), b"x");
-    messages.send(b"y").unwrap();
-    let mut frame = [0; 5];
-    client.read_exact(&mut frame).unwrap();
-    assert_eq!(&frame, b"\x00\x00\x00\x01y");
+    writer.join().unwrap();
 
     let name = place.name.clone();
     let connecting = thread::spawn(move || {
@@ -475,68 +423,4 @@ fn an_accept_with_a_timeout_ends_on_time_beside_one_that_waits() {
     assert!(waited < Duration::from_secs(2), "{waited:?}");
     let _client = Stream::connect(&place.name).unwrap();
     waiting.join().unwrap().unwrap();
-}
-
-#[test]
-fn a_read_timeout_on_messages_bounds_the_whole_receive_against_a_peer_sending_a_byte_at_a_time() {
-    let (_place, _listener, mut client, server) = pair("drip");
-    let dripping = thread::spawn(move || {
-        for byte in [0u8, 0, 0, 200] {
-            client.write_all(&[byte]).unwrap();
-            thread::sleep(Duration::from_millis(50));
-        }
-        for _ in 0..60 {
-            if client.write_all(b"x").is_err() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-    });
-    let mut messages = Messages::new(server).with_max_message(1000);
-    messages
-        .set_read_timeout(Some(Duration::from_millis(300)))
-        .unwrap();
-    let started = Instant::now();
-    assert_eq!(messages.recv().unwrap_err().kind(), io::ErrorKind::TimedOut);
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
-    );
-    drop(messages);
-    dripping.join().unwrap();
-}
-
-#[test]
-fn a_write_timeout_on_messages_bounds_the_whole_send_against_a_peer_reading_slowly() {
-    let place = place("slow-reader");
-    let listener = Listener::options()
-        .buffer_size(4096)
-        .bind(&place.name)
-        .unwrap();
-    let client = Stream::connect(&place.name).unwrap();
-    let mut server = listener.accept().unwrap();
-    let reading = thread::spawn(move || {
-        let mut chunk = [0; 8192];
-        for _ in 0..60 {
-            if matches!(server.read(&mut chunk), Ok(0) | Err(_)) {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-    });
-    let mut messages = Messages::new(client).with_max_message(64 * 1024 * 1024);
-    messages
-        .set_write_timeout(Some(Duration::from_millis(300)))
-        .unwrap();
-    let started = Instant::now();
-    let error = messages.send(&vec![0; 32 * 1024 * 1024]).unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
-    );
-    drop(messages);
-    reading.join().unwrap();
 }

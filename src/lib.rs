@@ -20,7 +20,6 @@ mod error;
 mod halves;
 mod identity;
 mod listener;
-mod messages;
 mod name;
 mod options;
 mod stream;
@@ -34,7 +33,6 @@ pub use error::Error;
 pub use halves::{ReadHalf, WriteHalf};
 pub use identity::{OsIdentity, current_user};
 pub use listener::Listener;
-pub use messages::{DEFAULT_MAX_MESSAGE, Messages};
 pub use name::PipeName;
 pub use options::{
     ConnectOptions, DEFAULT_BACKLOG, DEFAULT_BUFFER_SIZE, DEFAULT_CONNECT_TIMEOUT,

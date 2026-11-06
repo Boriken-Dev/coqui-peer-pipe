@@ -63,8 +63,6 @@ coqui-peer-noise = { git = "https://github.com/Boriken-Dev/coqui-peer-noise", re
 coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "9a61a1a9a9ef9ac37e7198c0d911901775760725", features = ["generate", "tokio"] }
 # Arbitrary frames and chunkings.
 proptest = { version = "1", default-features = false, features = ["std"] }
-# The shared wire vectors are JSON.
-serde_json = "1"
 # Temporary socket directories.
 tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "rt-multi-thread", "io-util", "time"] }

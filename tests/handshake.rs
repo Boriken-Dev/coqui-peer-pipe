@@ -7,12 +7,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use coqui_peer::{
-    DriveError, Method, drive_messages, drive_messages_until, drive_stream, drive_stream_until,
-};
+use coqui_peer::{DriveError, Method, drive_stream, drive_stream_until};
 use coqui_peer_noise::{Identity as NoiseIdentity, Noise, Trust as NoiseTrust};
 use coqui_peer_tls::{Identity as TlsIdentity, Pins, Tls, Trust as TlsTrust};
-use coqui_transport_pipe::{Listener, Messages, Stream};
+use coqui_transport_pipe::{Listener, Stream};
 use support::place;
 
 fn connected(tag: &str) -> (support::Place, Listener, Stream, Stream) {
@@ -86,19 +84,6 @@ fn noise_proves_both_keys_over_a_stream() {
 }
 
 #[test]
-fn noise_proves_both_keys_over_messages() {
-    let (initiator, responder, id_a, id_b) = noises();
-    let (dialled, answered) =
-        both_sides("noise-messages", initiator, responder, |handshake, io| {
-            drive_messages(handshake, &mut Messages::new(io))
-                .unwrap()
-                .peer
-        });
-    assert_eq!(dialled, id_b);
-    assert_eq!(answered, id_a);
-}
-
-#[test]
 fn noise_proves_both_keys_under_a_deadline() {
     let (initiator, responder, id_a, id_b) = noises();
     let (dialled, answered) =
@@ -107,24 +92,6 @@ fn noise_proves_both_keys_under_a_deadline() {
                 .unwrap()
                 .peer
         });
-    assert_eq!(dialled, id_b);
-    assert_eq!(answered, id_a);
-}
-
-#[test]
-fn noise_proves_both_keys_over_messages_under_a_deadline() {
-    let (initiator, responder, id_a, id_b) = noises();
-    let (dialled, answered) = both_sides(
-        "noise-messages-until",
-        initiator,
-        responder,
-        |handshake, io| {
-            let until = Instant::now() + Duration::from_secs(30);
-            drive_messages_until(handshake, &mut Messages::new(io), until)
-                .unwrap()
-                .peer
-        },
-    );
     assert_eq!(dialled, id_b);
     assert_eq!(answered, id_a);
 }
@@ -189,21 +156,6 @@ fn a_deadline_is_met_on_a_silent_peer() {
     let waited = started.elapsed();
     assert!(waited >= Duration::from_millis(190), "{waited:?}");
     assert!(waited < Duration::from_secs(5), "{waited:?}");
-}
-
-#[test]
-fn a_deadline_is_met_over_messages_on_a_silent_peer() {
-    let (initiator, _responder, _, _) = noises();
-    let (_place, _listener, client, _server) = connected("silent-messages");
-    let started = Instant::now();
-    let until = started + Duration::from_millis(200);
-    let result = drive_messages_until(
-        initiator.initiate().unwrap(),
-        &mut Messages::new(client),
-        until,
-    );
-    assert!(matches!(result, Err(DriveError::TimedOut)));
-    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[test]

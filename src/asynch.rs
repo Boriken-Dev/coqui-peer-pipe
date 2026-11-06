@@ -11,15 +11,13 @@ use core::task::{Context, Poll};
 use std::io;
 use std::time::Instant;
 
-use coqui_peer::{Weakening, asynch::MessageTransport};
+use coqui_peer::Weakening;
 use coqui_transport::asynch::{AsyncConnector, BoxFuture};
-use coqui_transport::frame::PeerDecoder;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::deadline;
 use crate::error::Error;
 use crate::identity::OsIdentity;
-use crate::messages::{DEFAULT_MAX_MESSAGE, READ_CHUNK, encode, too_long, torn, weakened};
 use crate::name::PipeName;
 use crate::options::{ConnectOptions, ListenerOptions};
 use crate::sys;
@@ -311,95 +309,6 @@ impl AsyncWrite for Stream {
 
     fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         dispatch!(self, inner => Pin::new(inner).poll_shutdown(context))
-    }
-}
-
-/// [`Messages`](crate::Messages) over a tokio stream, as a [`MessageTransport`] of
-/// `coqui_peer::asynch`.
-///
-/// A cancelled receive keeps what arrived for the next one. A send that failed or was cancelled after
-/// it began refuses every later send, since the next frame could not be found.
-#[derive(Debug)]
-pub struct Messages<S> {
-    io: S,
-    decoder: PeerDecoder,
-    max_message: usize,
-    sending: bool,
-}
-
-impl<S> Messages<S> {
-    /// Messages over `io`, each at most [`DEFAULT_MAX_MESSAGE`] bytes.
-    #[must_use]
-    pub fn new(io: S) -> Self {
-        Self {
-            io,
-            decoder: PeerDecoder::new(DEFAULT_MAX_MESSAGE),
-            max_message: DEFAULT_MAX_MESSAGE,
-            sending: false,
-        }
-    }
-
-    /// The largest message this sends and receives. It can be above the default, which
-    /// [`weakened`](Self::weakened) then lists.
-    #[must_use]
-    pub fn with_max_message(mut self, bytes: usize) -> Self {
-        self.max_message = bytes;
-        self.decoder.set_maximum(bytes);
-        self
-    }
-
-    /// The largest message this sends and receives.
-    #[must_use]
-    pub fn max_message(&self) -> usize {
-        self.max_message
-    }
-
-    /// The settings looser than the default.
-    #[must_use]
-    pub fn weakened(&self) -> Vec<Weakening> {
-        weakened(self.max_message)
-    }
-
-    /// The stream.
-    #[must_use]
-    pub fn get_ref(&self) -> &S {
-        &self.io
-    }
-
-    /// The stream, with any part of a frame already read dropped.
-    #[must_use]
-    pub fn into_inner(self) -> S {
-        self.io
-    }
-}
-
-impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageTransport for Messages<S> {
-    async fn send(&mut self, message: &[u8]) -> io::Result<()> {
-        if self.sending {
-            return Err(torn());
-        }
-        let frame = encode(message, self.max_message)?;
-        self.sending = true;
-        self.io.write_all(&frame).await?;
-        self.io.flush().await?;
-        self.sending = false;
-        Ok(())
-    }
-
-    async fn recv(&mut self) -> io::Result<Vec<u8>> {
-        let mut chunk = [0_u8; READ_CHUNK];
-        loop {
-            match self.decoder.next_frame() {
-                Ok(Some(message)) => return Ok(message),
-                Ok(None) => {}
-                Err(_) => return Err(too_long()),
-            }
-            let count = self.io.read(&mut chunk).await?;
-            if count == 0 {
-                return Err(io::ErrorKind::UnexpectedEof.into());
-            }
-            self.decoder.push(&chunk[..count]);
-        }
     }
 }
 

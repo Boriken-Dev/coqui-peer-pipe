@@ -1,6 +1,10 @@
 //! Helpers the test binaries share.
 #![allow(dead_code)]
 
+mod codec;
+#[allow(unused_imports)]
+pub use codec::LengthPrefix;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
