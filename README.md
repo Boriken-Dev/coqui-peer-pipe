@@ -7,10 +7,11 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-transport-pipe/test.yml)](https://github.com/Boriken-Dev/coqui-transport-pipe/actions/workflows/test.yml)
 
 **Windows named pipes and Unix domain sockets as a [`coqui-peer`](https://github.com/Boriken-Dev/coqui-peer)
-transport, with the operating system's access control on by default.** Every `coqui-peer` driver and every
-method runs over it unchanged, and with the `channel` feature so does a `coqui-agentic-peer` link. It proves no
-key: a method does that over the stream, and what the operating system says about the other end is reported
-beside it. See the [documentation](https://boriken-dev.github.io/coqui-transport-pipe/).
+transport and a [`coqui-transport`](https://github.com/Boriken-Dev/coqui-transport) transport, with the
+operating system's access control on by default.** Every `coqui-peer` driver and every method runs over it
+unchanged, and with the `channel` feature a `coqui_transport::StreamChannel` runs on a stream. It proves no key: a
+method does that over the stream, and what the operating system says about the other end is reported beside it.
+See the [documentation](https://boriken-dev.github.io/coqui-transport-pipe/).
 
 > **Status: alpha.** `0.0.0-alpha.0` is unreleased: depend on a git revision. The API may change at any commit.
 > Tested on Windows, Linux and FreeBSD; the macOS path is written and has not been run.
@@ -26,7 +27,9 @@ beside it. See the [documentation](https://boriken-dev.github.io/coqui-transport
   and logged at `warn` through `tracing`.
 - **Every `coqui-peer` driver**: `Read + Write`, `ReadTimeout` and `WriteTimeout` for streams, so deadlines hold;
   `AsyncRead + AsyncWrite` under `tokio`; `Messages`, a `MessageTransport` with a bound on message size.
-- **`coqui-web-channel` channels**: a `Channel` over a stream, so `coqui-agentic-peer` links run on it.
+- **`coqui-transport` channels**: a `Stream` is a `Split`, so `StreamChannel::start(stream, PeerFrame)` is a channel of
+  whole messages on it, with the same wire as `Messages`; `Connector` and `Listener` implement the crate's connector
+  and listener traits.
 - **The other end's OS identity** (`SO_PEERCRED`, the client's token), as information, never in place of a key proof.
 
 ## Installation
@@ -37,11 +40,11 @@ cargo add coqui-transport-pipe --git https://github.com/Boriken-Dev/coqui-transp
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
-| `tokio` | `tokio`, `coqui-peer/tokio` | module `asynch`: async listener, stream and messages | off |
-| `channel` | `coqui-web-channel` | module `channel`: a `coqui_web_channel::Channel`, for `coqui-agentic-peer` links | off |
+| `tokio` | `tokio`, `coqui-peer/tokio`, `coqui-transport/tokio` | module `asynch`: async listener, stream, messages and connector | off |
+| `channel` | nothing | `Stream` as a `coqui_transport::Split`, with `ReadHalf` and `WriteHalf` | off |
 
-Rust 1.89 or later. A default build depends on `coqui-peer`, `tracing`, on Windows `windows-sys`, and on Unix
-`socket2` and `libc`.
+Rust 1.89 or later. A default build depends on `coqui-peer`, `coqui-transport` (no features), `tracing`, on Windows
+`windows-sys`, and on Unix `socket2` and `libc`.
 
 ## Quick start
 
@@ -107,9 +110,8 @@ assert_eq!(options.weakened()[0].setting, "read_timeout");
 
 | Module | Purpose |
 | --- | --- |
-| `coqui_transport_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `OsIdentity`, `Messages`, `Error`, and `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. |
-| `coqui_transport_pipe::asynch` | The listener, the stream and `Messages` over tokio (`tokio`). |
-| `coqui_transport_pipe::channel` | `Channel`, a `coqui_web_channel::Channel` over a stream (`channel`). |
+| `coqui_transport_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `Connector`, `OsIdentity`, `Messages`, `Error`, `ReadHalf` and `WriteHalf` (`channel`), and `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. |
+| `coqui_transport_pipe::asynch` | The listener, the stream, `Connector` and `Messages` over tokio (`tokio`). |
 
 ## Limits
 

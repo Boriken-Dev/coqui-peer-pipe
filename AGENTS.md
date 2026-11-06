@@ -7,18 +7,19 @@ package and is self-contained. Development documentation lives with the source a
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
-| `tokio` | `tokio` (`net`, `io-util`, `time`), `coqui-peer/tokio` | module `asynch` | off |
-| `channel` | `coqui-web-channel` | module `channel`: a `coqui_web_channel::Channel`, so `coqui-agentic-peer` links run on a stream | off |
+| `tokio` | `tokio` (`net`, `io-util`, `time`), `coqui-peer/tokio`, `coqui-transport/tokio` | module `asynch` | off |
+| `channel` | nothing | `Stream: coqui_transport::Split`, with `ReadHalf` and `WriteHalf`, so `StreamChannel::start` runs on a stream | off |
 
-MSRV Rust 1.89. A default build depends on `coqui-peer` (by git revision, `1f00bfe`), `tracing`, on
-Windows `windows-sys`, and on Unix `socket2` and `libc`. Version `0.0.0-alpha.0`, unreleased: depend on a
-git revision, and name the same `coqui-peer` and `coqui-web-channel` revisions if you use them directly. This is a
-transport of `coqui-peer`, not a method: it proves no key, and a method runs over it.
+MSRV Rust 1.89. A default build depends on `coqui-peer` (by git revision, `1f00bfe`), `coqui-transport` (by git
+revision, `3cb386f`, no features), `tracing`, on Windows `windows-sys`, and on Unix `socket2` and `libc`. Version
+`0.0.0-alpha.0`, unreleased: depend on a git revision, and name the same `coqui-peer` and `coqui-transport`
+revisions if you use them directly. This is a transport of `coqui-peer` and of `coqui-transport`, not a method: it
+proves no key, and a method runs over it.
 
 Imports: the crate root holds `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`,
-`OsIdentity`, `current_user`, `Messages`, `Error`, the `DEFAULT_` constants, and re-exports of
-`coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. Public modules: `asynch`
-(feature `tokio`), `channel` (feature `channel`).
+`OsIdentity`, `current_user`, `Connector`, `Messages`, `Error`, `ReadHalf` and `WriteHalf` (feature `channel`), the
+`DEFAULT_` constants, and re-exports of `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and
+`Weakening`. One public module: `asynch` (feature `tokio`).
 
 `unsafe` only for the operating system's calls, in `src/sys/windows.rs` and `src/sys/unix_os.rs`; a test
 lists them. No process-wide state. A library prints nothing: a setting looser than its default is
@@ -194,7 +195,7 @@ Neither says the integrity level: a sandboxed or non-elevated process of this us
 ## Messages (`coqui_transport_pipe::Messages`)
 
 ```rust
-pub const DEFAULT_MAX_MESSAGE: usize;   // coqui_peer::MAX_MESSAGE, 1 MiB
+pub const DEFAULT_MAX_MESSAGE: usize;   // coqui_transport::frame::DEFAULT_MAX_MESSAGE, 1 MiB, as coqui_peer::MAX_MESSAGE
 pub struct Messages<S>;                 // Debug
 impl<S> Messages<S> {
     pub fn new(io: S) -> Messages<S>;
@@ -202,14 +203,16 @@ impl<S> Messages<S> {
     pub fn max_message(&self) -> usize;
     pub fn weakened(&self) -> Vec<Weakening>;                     // above the default
     pub fn get_ref(&self) -> &S;
-    pub fn into_inner(self) -> S;                                 // a frame part read is dropped
+    pub fn into_inner(self) -> S;                                 // a frame or part of one read ahead is dropped
 }
 impl<S: Read + Write + ReadTimeout + WriteTimeout> MessageTransport for Messages<S>;
 impl<S: ReadTimeout> ReadTimeout for Messages<S>;
 impl<S: WriteTimeout> WriteTimeout for Messages<S>;
 ```
 
-Four big-endian length bytes, then the message: `coqui_peer::write_frame`'s format, with a bound of your own.
+Four big-endian length bytes, then the message: `coqui_transport::frame::PeerFrame`, which is
+`coqui_peer::write_frame`'s format, with a bound of your own. A `recv` reads ahead of the frame it returns (up to 16 KiB at
+a time), so a frame behind it waits in the `Messages` for the next `recv`.
 `send` above the bound is `InvalidInput` and writes nothing. `recv` of a declared length above it is `InvalidData`
 before anything of it is read, and for every later call; the buffer grows as bytes arrive. `recv` at the stream's
 end is `UnexpectedEof`, inside a frame or not.
@@ -250,38 +253,39 @@ own, and the options' read and write timeouts mean nothing here: wrap a call in 
 after it began refuses every later send. `poll_shutdown` ends the writing direction on Unix and does nothing on
 Windows, where dropping the stream is the end.
 
-## Channel (`coqui_transport_pipe::channel`, feature `channel`)
+## Channels and connectors (`coqui_transport_pipe::{ReadHalf, WriteHalf, Connector}`)
 
 ```rust
-pub const DEFAULT_QUEUED_BYTES: usize;      // 64 MiB
-pub const DEFAULT_SEND_LIMIT: Duration;     // 30 s
-pub struct ChannelOptions;                  // Clone, Copy, Debug, Default = new(), must_use
-impl ChannelOptions {
-    pub fn new() -> ChannelOptions;
-    pub fn max_message(self, bytes: usize);     // both ways, default DEFAULT_MAX_MESSAGE
-    pub fn queued_bytes(self, bytes: usize);
-    pub fn send_limit(self, limit: Duration);
-    pub fn weakened(&self) -> Vec<Weakening>;
-    pub fn start(self, stream: Stream) -> io::Result<Channel>;
+// feature `channel`
+impl coqui_transport::Split for Stream { type Reader = ReadHalf; type Writer = WriteHalf; }
+pub struct ReadHalf;    // Debug, Send; Read
+pub struct WriteHalf;   // Debug, Send; Write; dropping it ends the writing direction
+
+pub struct Connector;   // Clone, Debug, must_use
+impl Connector {
+    pub fn new(name: PipeName) -> Connector;
+    pub fn with_options(self, ConnectOptions) -> Connector;
+    pub fn name(&self) -> &PipeName;
 }
-pub struct Channel;                         // Debug; implements coqui_web_channel::Channel
-impl Channel {
-    pub fn start(stream: Stream) -> io::Result<Channel>;   // one thread of its own, joined on close
-    pub fn options() -> ChannelOptions;
-    pub fn peer(&self) -> io::Result<OsIdentity>;
-}
+impl coqui_transport::Connector for Connector { type Connection = Stream; type Error = Error; }   // connect(timeout) replaces the options' own
+impl coqui_transport::Listener for Listener { type Connection = Stream; type Error = Error; }     // accept(): the inherent accept
 ```
 
-It is not authenticated: run a key proof on it (`coqui_agentic_peer::auth::prove`, then `Sealed`) before anything
-else. `send` queues, and its writer thread writes: each queued message counts its frame and 64 bytes more against
-`queued_bytes`, so many small messages are bounded as a few large ones are. `Failure::Protocol` above the bound; `Failure::NoProgress` at once
-when the queue has no room; `send_timeout` waits for room, and `Failure::Timeout` means not sent, with the channel
-going on. A peer that takes nothing for `send_limit` ends the channel with `Failure::NoProgress`. `receive` reads on the
-caller's thread, so nothing is read ahead and a slow reader holds the peer back: `Ok(None)` on an end between frames,
-`Failure::PathLost` on one inside a frame, `Failure::Timeout` keeping what arrived, `Failure::Protocol` above the
-bound, which ends the connection. `set_max_message`, `set_max_receive`, `set_max_receive_after` and `set_max_send`
-work as the trait says. `close`, and dropping, send what is queued for at most `send_limit`, end the connection and
-join the thread. There are no datagrams and no certificates.
+`StreamChannel::start(stream, PeerFrame)` (or its `builder`) is the channel on a pipe: the same four big-endian length
+bytes as `Messages`, so a `Messages` at one end and a `StreamChannel` at the other talk. The channel's contract, bounds,
+queueing and close are `coqui-transport`'s `StreamChannel`, which `AGENTS.md` there holds. It is not authenticated: run a key
+proof on it before anything else.
+
+`split` gives both halves one shared stream and an `Interrupt` that is `Stream::shutdown`, so a read blocked in the reader
+thread is woken on close. The stream's own read and write timeouts stay (30 s by default; `StreamChannel` retries a timed-out
+read or write). Dropping the `WriteHalf` is `shutdown(Write)` on Unix, so the peer reads the end while this side goes on
+reading; on Windows a pipe has no half-close and it ends both directions. `Stream::peer` is asked before the stream is given
+to `start`: the channel does not expose it.
+
+`Connector::connect` and `Listener::accept` return the same `Stream` and errors as `Stream::connect` and the inherent
+`accept`. With `tokio`, `asynch::Connector` is a `coqui_transport::asynch::AsyncConnector` (same fields and builder) and an
+`asynch::Stream` is `AsyncRead + AsyncWrite`, so `coqui_transport::asynch::StreamChannel::new(stream, PeerFrame)` runs on it.
+`asynch::Listener` is not an `AsyncListener`: its `accept` takes `&mut self`.
 
 ## Errors
 
@@ -310,6 +314,11 @@ only when absolute.
   full queue (FreeBSD; not measured on macOS) can therefore make another program's live, saturated socket look
   stale; this crate's own listeners are protected by `<path>.lock`.
 - `<path>.lock` stays beside a Unix socket by design: removing it would let two binders hold locks on two files.
+- Windows, async: `poll_shutdown` ends nothing, so an async `StreamChannel`'s `close` does not end the stream for the peer
+  until the stream is dropped.
+- The `coqui-agentic-peer` link over a pipe is not tested here: `coqui-agentic-peer` still names `coqui-web-channel`'s
+  `Channel`, which is not `coqui_transport::Channel` until it moves to that crate. That test (a sealed `Mux` link on
+  a channel over a stream; the Noise and TLS handshake tests stay) returns with the dev-dependency when agentic-peer moves.
 - A key-proof handshake and these streams have separate bounds: the stream's 30 s read timeout ends a silent
   `drive_stream`, and `_until` then replaces it.
 - A long-lived stream read with no message pending gets `TimedOut` every 30 s by default: read again, or set `None`.

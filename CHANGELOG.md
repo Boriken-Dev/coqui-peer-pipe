@@ -31,3 +31,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tokio.
 - `channel`, behind `channel`: a `coqui_web_channel::Channel` over a stream, so `coqui-agentic-peer` links run
   on a pipe.
+- `Connector`, and `asynch::Connector` with `tokio`: a name and `ConnectOptions` as a `coqui_transport::Connector` and
+  `AsyncConnector`; `Listener` is a `coqui_transport::Listener`.
+
+### Changed
+
+- The crate is `coqui-transport-pipe` (it was `coqui-peer-pipe`), in the `coqui-transport` family: the repository is
+  `Boriken-Dev/coqui-transport-pipe`, the library `coqui_transport_pipe`.
+- The `channel` feature is no longer a module: it makes `Stream` a `coqui_transport::Split` (with `ReadHalf` and
+  `WriteHalf`), so `coqui_transport::StreamChannel::start(stream, PeerFrame)` is the channel on a pipe. The wire is
+  unchanged, byte for byte (a test reads `coqui-transport`'s `peer_frame.json` through a real pipe), and a
+  `Messages` and a `StreamChannel` talk to each other.
+- `Messages`, blocking and async, is framed by `coqui_transport::frame::PeerFrame`, and
+  `DEFAULT_MAX_MESSAGE` is `coqui_transport::frame::DEFAULT_MAX_MESSAGE` (still 1 MiB). A `recv` now reads ahead of
+  the frame it returns, so `into_inner` drops a frame already read behind it, not only a part of one.
+- The crate depends on `coqui-transport` by git revision, and no longer on `coqui-web-channel` or, for its tests, on
+  `coqui-agentic-peer`.
+
+### Removed
+
+- The `channel` module: `Channel`, `ChannelOptions`, `DEFAULT_QUEUED_BYTES` and `DEFAULT_SEND_LIMIT`. Use
+  `coqui_transport::StreamChannel` (its builder has the same options and more); `Channel::peer` is `Stream::peer`,
+  asked before the stream is given to the channel. The channel read inside `receive`; `StreamChannel` reads ahead on a
+  thread (`set_pending` bounds it).
+- The channel's own frame code. `Messages` stays: it is `coqui-peer`'s `MessageTransport`, which no `coqui-transport`
+  type is, and it keeps a bound of its own and a deadline over a whole receive.

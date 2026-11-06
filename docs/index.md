@@ -2,7 +2,7 @@
 
 Windows named pipes and Unix domain sockets as a transport of
 [`coqui-peer`](https://github.com/Boriken-Dev/coqui-peer), so anything that runs a coqui-peer
-handshake or a `coqui-web-channel` channel also runs between two processes on one machine, with no port
+handshake or a `coqui-transport` channel also runs between two processes on one machine, with no port
 to squat and the operating system's access control beside the key proof.
 
 !!! note "Alpha"
