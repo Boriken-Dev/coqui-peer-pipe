@@ -25,7 +25,7 @@ lists them. No process-wide state. A library prints nothing: a setting looser th
 returned by `weakened()` and logged at `warn` through `tracing`. Nothing reads a file or an environment
 variable unless the caller asks: `PipeName::named` and parsing `pipe:NAME` read two on Unix.
 
-Tested on Windows and Linux. The macOS path (`getpeereid`, `LOCAL_PEERPID`) is written and has not been
+Tested on Windows, Linux and FreeBSD (14.5: `getpeereid`, which gives no process there). The macOS path (`getpeereid`, `LOCAL_PEERPID`) is written and has not been
 run.
 
 ## Names (`coqui_peer_pipe::PipeName`)

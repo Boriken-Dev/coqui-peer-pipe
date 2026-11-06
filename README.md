@@ -13,7 +13,7 @@ key: a method does that over the stream, and what the operating system says abou
 beside it. See the [documentation](https://boriken-dev.github.io/coqui-peer-pipe/).
 
 > **Status: alpha.** `0.0.0-alpha.0` is unreleased: depend on a git revision. The API may change at any commit.
-> Tested on Windows and Linux; the macOS path is written and has not been run.
+> Tested on Windows, Linux and FreeBSD; the macOS path is written and has not been run.
 
 ## Features
 
