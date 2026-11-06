@@ -11,8 +11,8 @@ use coqui_peer::{
     DriveError, Method, drive_messages, drive_messages_until, drive_stream, drive_stream_until,
 };
 use coqui_peer_noise::{Identity as NoiseIdentity, Noise, Trust as NoiseTrust};
-use coqui_transport_pipe::{Listener, Messages, Stream};
 use coqui_peer_tls::{Identity as TlsIdentity, Pins, Tls, Trust as TlsTrust};
+use coqui_transport_pipe::{Listener, Messages, Stream};
 use support::place;
 
 fn connected(tag: &str) -> (support::Place, Listener, Stream, Stream) {

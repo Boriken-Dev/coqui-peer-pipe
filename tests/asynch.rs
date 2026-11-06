@@ -10,9 +10,9 @@ use coqui_peer::asynch::{
 };
 use coqui_peer::{DriveError, Method};
 use coqui_peer_noise::{Identity as NoiseIdentity, Noise, Trust as NoiseTrust};
+use coqui_peer_tls::{Identity as TlsIdentity, Pins, Tls, Trust as TlsTrust};
 use coqui_transport_pipe::asynch::{Listener, Messages, Stream};
 use coqui_transport_pipe::{Error, current_user};
-use coqui_peer_tls::{Identity as TlsIdentity, Pins, Tls, Trust as TlsTrust};
 use support::place;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -366,4 +366,46 @@ mod unix {
         let result = Listener::bind(&name);
         assert!(matches!(result, Err(Error::SharedDirectory)), "{result:?}");
     }
+}
+
+#[tokio::test]
+async fn an_async_stream_channel_runs_on_the_stream_through_the_connector() {
+    use coqui_transport::asynch::{AsyncChannel, AsyncConnector, StreamChannel};
+    use coqui_transport::frame::PeerFrame;
+    use coqui_transport_pipe::asynch::Connector;
+
+    let place = place("async-channel");
+    let mut listener = Listener::bind(&place.name).unwrap();
+    let connector = Connector::new(place.name.clone());
+    let client = connector.connect(Duration::from_secs(5)).await.unwrap();
+    let server = listener.accept().await.unwrap();
+    let client = StreamChannel::new(client, PeerFrame);
+    let server = StreamChannel::new(server, PeerFrame);
+    client.send(b"over a pipe").await.unwrap();
+    let wait = Some(Duration::from_secs(10));
+    assert_eq!(server.receive(wait).await.unwrap().unwrap(), b"over a pipe");
+    server.send(b"").await.unwrap();
+    assert_eq!(client.receive(wait).await.unwrap().unwrap(), b"");
+    // On Windows `poll_shutdown` ends nothing, and dropping the stream is the end.
+    client.close().await;
+    drop(client);
+    assert_eq!(server.receive(wait).await, Ok(None));
+}
+
+#[tokio::test]
+async fn the_async_connector_takes_its_timeout_from_the_call() {
+    use coqui_transport::asynch::AsyncConnector;
+    use coqui_transport_pipe::asynch::Connector;
+
+    let place = place("async-nobody");
+    let started = std::time::Instant::now();
+    let error = Connector::new(place.name.clone())
+        .connect(Duration::from_millis(300))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, Error::NotListening | Error::TimedOut),
+        "{error:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(4));
 }

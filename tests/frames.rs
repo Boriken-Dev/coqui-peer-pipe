@@ -5,7 +5,9 @@ use std::io::{self, Read, Write};
 use std::time::Duration;
 
 use coqui_peer::{read_frame, write_frame};
-use coqui_transport_pipe::{DEFAULT_MAX_MESSAGE, MessageTransport, Messages, ReadTimeout, WriteTimeout};
+use coqui_transport_pipe::{
+    DEFAULT_MAX_MESSAGE, MessageTransport, Messages, ReadTimeout, WriteTimeout,
+};
 use proptest::prelude::*;
 
 /// A scripted stream: bytes to read in the given chunks, an error between chunks, and what was written.
