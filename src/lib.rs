@@ -13,21 +13,28 @@ extern crate alloc;
 #[cfg(not(any(windows, unix)))]
 compile_error!("coqui-transport-pipe needs Windows named pipes or Unix domain sockets");
 
+mod connector;
 mod deadline;
 mod error;
-mod frame;
+#[cfg(feature = "channel")]
+mod halves;
 mod identity;
 mod listener;
+mod messages;
 mod name;
 mod options;
 mod stream;
 mod sys;
 
+pub use connector::Connector;
 pub use coqui_peer::{MessageTransport, ReadTimeout, Weakening, WriteTimeout};
 pub use error::Error;
-pub use frame::{DEFAULT_MAX_MESSAGE, Messages};
+#[cfg(feature = "channel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "channel")))]
+pub use halves::{ReadHalf, WriteHalf};
 pub use identity::{OsIdentity, current_user};
 pub use listener::Listener;
+pub use messages::{DEFAULT_MAX_MESSAGE, Messages};
 pub use name::PipeName;
 pub use options::{
     ConnectOptions, DEFAULT_BACKLOG, DEFAULT_BUFFER_SIZE, DEFAULT_CONNECT_TIMEOUT,
@@ -38,6 +45,3 @@ pub use stream::Stream;
 #[cfg(feature = "tokio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub mod asynch;
-#[cfg(feature = "channel")]
-#[cfg_attr(docsrs, doc(cfg(feature = "channel")))]
-pub mod channel;

@@ -104,6 +104,18 @@ impl Stream {
     }
 }
 
+impl Stream {
+    /// Ends the writing direction only: the peer reads what was written, then the end, and this side
+    /// still reads.
+    #[cfg(feature = "channel")]
+    pub(crate) fn shutdown_write(&self) -> io::Result<()> {
+        match self.socket.shutdown(Shutdown::Write) {
+            Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
+            other => other,
+        }
+    }
+}
+
 /// Writes to `socket` so that a peer that left is `BrokenPipe`, never SIGPIPE, which ends a process
 /// that left it at its default (a C host, say). std does the same only from some versions on.
 #[cfg(not(target_vendor = "apple"))]

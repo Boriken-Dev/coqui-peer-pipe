@@ -21,9 +21,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 # Async listener, stream and message transport over tokio.
-tokio = ["dep:tokio", "coqui-peer/tokio"]
-# A coqui-web-channel `Channel` over a stream, so coqui-agentic-peer links run on it.
-channel = ["dep:coqui-web-channel"]
+tokio = ["dep:tokio", "coqui-peer/tokio", "coqui-transport/tokio"]
+# `Stream` implements `coqui_transport::Split`, so `StreamChannel::start` runs on a pipe.
+channel = []
 
 [dependencies]
 # ReadTimeout, WriteTimeout, MessageTransport and Weakening, which make this a transport of the
@@ -33,9 +33,9 @@ coqui-peer = { git = "https://github.com/Boriken-Dev/coqui-peer", rev = "1f00bfe
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 # Async streams, behind `tokio`.
 tokio = { version = "1", default-features = false, features = ["net", "io-util", "time"], optional = true }
-# The Channel trait, behind `channel`. No features: this crate brings its own driver. The revision
-# coqui-agentic-peer pins, since a second revision would be a second trait.
-coqui-web-channel = { git = "https://github.com/Boriken-Dev/coqui-web-channel", rev = "0b5b05c9af3417f6b13edc0fc7d9c86c02a63eca", default-features = false, optional = true }
+# The connector and listener traits, the codec `Messages` frames with, and `Split`, which `StreamChannel`
+# runs a stream through. The family has no releases for now: a git revision.
+coqui-transport = { git = "https://github.com/Boriken-Dev/coqui-transport", rev = "3cb386f211e67f06ea41d6036b8b299961d2e50c", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # Named pipes. Microsoft's bindings, which tokio already uses. `interprocess` was the candidate above
@@ -58,12 +58,13 @@ socket2 = { version = "0.6", default-features = false, features = ["all"] }
 libc = { version = "0.2", default-features = false }
 
 [dev-dependencies]
-# The two methods the handshake tests drive, and a link on a Channel.
+# The two methods the handshake tests drive.
 coqui-peer-noise = { git = "https://github.com/Boriken-Dev/coqui-peer-noise", rev = "8777403807e3ad6eb6fddc98d9b5b6753bb0e424" }
 coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "9a61a1a9a9ef9ac37e7198c0d911901775760725", features = ["generate", "tokio"] }
-coqui-agentic-peer = { git = "https://github.com/Boriken-Dev/coqui-agentic-peer", rev = "f6da790585e51345fa58f5e989cedd6500a0b962" }
 # Arbitrary frames and chunkings.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# The shared wire vectors are JSON.
+serde_json = "1"
 # Temporary socket directories.
 tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "rt-multi-thread", "io-util", "time"] }

@@ -76,6 +76,12 @@ impl Stream {
     pub fn shutdown(&self) -> io::Result<()> {
         self.inner.shutdown()
     }
+
+    /// Ends the writing direction only, where the system can: see [`WriteHalf`](crate::WriteHalf).
+    #[cfg(feature = "channel")]
+    pub(crate) fn shutdown_write(&self) -> io::Result<()> {
+        self.inner.shutdown_write()
+    }
 }
 
 impl Read for &Stream {

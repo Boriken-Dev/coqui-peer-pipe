@@ -12,12 +12,14 @@ use std::io;
 use std::time::Instant;
 
 use coqui_peer::{Weakening, asynch::MessageTransport};
+use coqui_transport::asynch::{AsyncConnector, BoxFuture};
+use coqui_transport::frame::PeerDecoder;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use crate::deadline;
 use crate::error::Error;
-use crate::frame::{DEFAULT_MAX_MESSAGE, Decoder, encode, too_long, torn, weakened};
 use crate::identity::OsIdentity;
+use crate::messages::{DEFAULT_MAX_MESSAGE, READ_CHUNK, encode, too_long, torn, weakened};
 use crate::name::PipeName;
 use crate::options::{ConnectOptions, ListenerOptions};
 use crate::sys;
@@ -320,10 +322,9 @@ impl AsyncWrite for Stream {
 #[derive(Debug)]
 pub struct Messages<S> {
     io: S,
-    decoder: Decoder,
+    decoder: PeerDecoder,
     max_message: usize,
     sending: bool,
-    broken: bool,
 }
 
 impl<S> Messages<S> {
@@ -332,10 +333,9 @@ impl<S> Messages<S> {
     pub fn new(io: S) -> Self {
         Self {
             io,
-            decoder: Decoder::default(),
+            decoder: PeerDecoder::new(DEFAULT_MAX_MESSAGE),
             max_message: DEFAULT_MAX_MESSAGE,
             sending: false,
-            broken: false,
         }
     }
 
@@ -344,6 +344,7 @@ impl<S> Messages<S> {
     #[must_use]
     pub fn with_max_message(mut self, bytes: usize) -> Self {
         self.max_message = bytes;
+        self.decoder.set_maximum(bytes);
         self
     }
 
@@ -386,22 +387,61 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageTransport for Messages<S> 
     }
 
     async fn recv(&mut self) -> io::Result<Vec<u8>> {
-        if self.broken {
-            return Err(too_long());
-        }
+        let mut chunk = [0_u8; READ_CHUNK];
         loop {
-            let count = self.io.read(self.decoder.space()).await?;
+            match self.decoder.next_frame() {
+                Ok(Some(message)) => return Ok(message),
+                Ok(None) => {}
+                Err(_) => return Err(too_long()),
+            }
+            let count = self.io.read(&mut chunk).await?;
             if count == 0 {
                 return Err(io::ErrorKind::UnexpectedEof.into());
             }
-            match self.decoder.filled(count, self.max_message) {
-                Ok(Some(message)) => return Ok(message),
-                Ok(None) => {}
-                Err(error) => {
-                    self.broken = true;
-                    return Err(error);
-                }
-            }
+            self.decoder.push(&chunk[..count]);
         }
+    }
+}
+
+/// Connects to one [`PipeName`] with [`ConnectOptions`], as a `coqui_transport::asynch::AsyncConnector`.
+///
+/// `connect`'s timeout replaces the options' own. The listener has no such form: `AsyncListener::accept`
+/// takes `&self`, and [`Listener::accept`] needs `&mut self`.
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct Connector {
+    inner: crate::Connector,
+}
+
+impl Connector {
+    /// A connector for `name` with [`ConnectOptions`]'s defaults.
+    pub fn new(name: PipeName) -> Self {
+        Self {
+            inner: crate::Connector::new(name),
+        }
+    }
+
+    /// The settings to connect with.
+    pub fn with_options(mut self, options: ConnectOptions) -> Self {
+        self.inner = self.inner.with_options(options);
+        self
+    }
+
+    /// The name this connects to.
+    #[must_use]
+    pub fn name(&self) -> &PipeName {
+        self.inner.name()
+    }
+}
+
+impl AsyncConnector for Connector {
+    type Connection = Stream;
+    type Error = Error;
+
+    fn connect(&self, timeout: core::time::Duration) -> BoxFuture<'_, Result<Stream, Error>> {
+        Box::pin(Stream::connect_with(
+            &self.inner.name,
+            self.inner.options.clone().timeout(timeout),
+        ))
     }
 }

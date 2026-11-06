@@ -400,6 +400,14 @@ impl Stream {
     }
 }
 
+impl Stream {
+    /// A pipe has no half-close, so this ends both directions, as [`shutdown`](Self::shutdown).
+    #[cfg(feature = "channel")]
+    pub(crate) fn shutdown_write(&self) -> io::Result<()> {
+        self.shutdown()
+    }
+}
+
 /// std refuses a zero timeout on a socket, and a pipe has the same contract.
 fn check_timeout(timeout: Option<Duration>) -> io::Result<()> {
     if timeout == Some(Duration::ZERO) {
