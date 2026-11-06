@@ -26,7 +26,7 @@ beside it. See the [documentation](https://boriken-dev.github.io/coqui-peer-pipe
   and logged at `warn` through `tracing`.
 - **Every `coqui-peer` driver**: `Read + Write`, `ReadTimeout` and `WriteTimeout` for streams, so deadlines hold;
   `AsyncRead + AsyncWrite` under `tokio`; `Messages`, a `MessageTransport` with a bound on message size.
-- **`coqui-web` channels**: a `Channel` over a stream, so `coqui-agentic-peer` links run on it.
+- **`coqui-web-channel` channels**: a `Channel` over a stream, so `coqui-agentic-peer` links run on it.
 - **The other end's OS identity** (`SO_PEERCRED`, the client's token), as information, never in place of a key proof.
 
 ## Installation
@@ -38,7 +38,7 @@ cargo add coqui-peer-pipe --git https://github.com/Boriken-Dev/coqui-peer-pipe
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
 | `tokio` | `tokio`, `coqui-peer/tokio` | module `asynch`: async listener, stream and messages | off |
-| `channel` | `coqui-web` | module `channel`: a `coqui_web::Channel`, for `coqui-agentic-peer` links | off |
+| `channel` | `coqui-web-channel` | module `channel`: a `coqui_web_channel::Channel`, for `coqui-agentic-peer` links | off |
 
 Rust 1.89 or later. A default build depends on `coqui-peer`, `tracing`, on Windows `windows-sys`, and on Unix
 `socket2` and `libc`.
@@ -109,7 +109,7 @@ assert_eq!(options.weakened()[0].setting, "read_timeout");
 | --- | --- |
 | `coqui_peer_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `OsIdentity`, `Messages`, `Error`, and `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. |
 | `coqui_peer_pipe::asynch` | The listener, the stream and `Messages` over tokio (`tokio`). |
-| `coqui_peer_pipe::channel` | `Channel`, a `coqui_web::Channel` over a stream (`channel`). |
+| `coqui_peer_pipe::channel` | `Channel`, a `coqui_web_channel::Channel` over a stream (`channel`). |
 
 ## Limits
 

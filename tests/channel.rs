@@ -12,7 +12,7 @@ use coqui_agentic_peer::mux::{Limits, Mux, Side};
 use coqui_agentic_peer::peers::{Events, MemoryPeers, NoEvents, PeerRecord, PeerStore};
 use coqui_peer_pipe::channel::{Channel, ChannelOptions, DEFAULT_QUEUED_BYTES};
 use coqui_peer_pipe::{Listener, Stream};
-use coqui_web::{Channel as _, Failure};
+use coqui_web_channel::{Channel as _, Failure};
 use support::place;
 
 const WAIT: Option<Duration> = Some(Duration::from_secs(10));
@@ -147,6 +147,14 @@ fn a_stage_of_nothing_is_the_bound_at_once_and_a_later_call_replaces_a_stage() {
     client.send(b"efgh").unwrap();
     assert_eq!(server.receive(WAIT).unwrap().unwrap(), b"abcd");
     assert_eq!(server.receive(WAIT).unwrap().unwrap(), b"efgh");
+}
+
+#[test]
+fn a_channel_that_reads_only_inside_receive_refuses_a_read_ahead_limit() {
+    let (_place, _listener, client, server) = channels("pending");
+    assert_eq!(server.set_pending(1), Err(Failure::Unsupported));
+    client.send(b"abcd").unwrap();
+    assert_eq!(server.receive(WAIT).unwrap().unwrap(), b"abcd");
 }
 
 #[test]

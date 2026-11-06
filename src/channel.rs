@@ -1,4 +1,4 @@
-//! A `coqui-web` channel over a [`Stream`], so anything built on channels runs on a pipe.
+//! A `coqui-web-channel` channel over a [`Stream`], so anything built on channels runs on a pipe.
 #![forbid(unsafe_code)]
 
 use alloc::collections::VecDeque;
@@ -11,16 +11,16 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use coqui_peer::{ReadTimeout, Weakening, WriteTimeout};
-use coqui_web::Failure;
+use coqui_web_channel::Failure;
 
 use crate::deadline;
 use crate::frame::{DEFAULT_MAX_MESSAGE, Decoder, encode, weakened};
 use crate::identity::OsIdentity;
 use crate::stream::Stream;
 
-/// The default bound on bytes queued to send, as `coqui_web::Limits`.
+/// The default bound on bytes queued to send, as `coqui_web_channel::Limits`.
 pub const DEFAULT_QUEUED_BYTES: usize = 64 * 1024 * 1024;
-/// The default time the peer may take nothing while there is something to send, as `coqui_web::Limits`.
+/// The default time the peer may take nothing while there is something to send, as `coqui_web_channel::Limits`.
 pub const DEFAULT_SEND_LIMIT: Duration = Duration::from_secs(30);
 
 /// Bytes counted for each queued message beyond its frame: about what holding one in the queue costs,
@@ -60,14 +60,14 @@ impl ChannelOptions {
 
     /// The most bytes queued to send, each message counting its frame and 64 bytes more; a message
     /// that does not fit waits or is refused, as
-    /// [`send`](coqui_web::Channel::send) and [`send_timeout`](coqui_web::Channel::send_timeout) say.
+    /// [`send`](coqui_web_channel::Channel::send) and [`send_timeout`](coqui_web_channel::Channel::send_timeout) say.
     pub fn queued_bytes(mut self, bytes: usize) -> Self {
         self.queued_bytes = bytes;
         self
     }
 
     /// How long the peer may take nothing while there is something to send, after which the channel
-    /// ends with `Failure::NoProgress`. Also the most [`close`](coqui_web::Channel::close) waits for
+    /// ends with `Failure::NoProgress`. Also the most [`close`](coqui_web_channel::Channel::close) waits for
     /// what is queued to go out.
     pub fn send_limit(mut self, limit: Duration) -> Self {
         self.send_limit = limit;
@@ -172,7 +172,7 @@ fn wait_until<'a, T>(
     }
 }
 
-/// A [`coqui_web::Channel`] over a [`Stream`]: every message one frame, as [`Messages`](crate::Messages).
+/// A [`coqui_web_channel::Channel`] over a [`Stream`]: every message one frame, as [`Messages`](crate::Messages).
 ///
 /// It is not authenticated: run a key proof on it before anything else. A send goes on a queue that its
 /// writer thread empties, so a message once queued is not taken back, and one refused for want of room
@@ -371,7 +371,7 @@ impl Shared {
     }
 }
 
-impl coqui_web::Channel for Channel {
+impl coqui_web_channel::Channel for Channel {
     fn send(&self, message: &[u8]) -> Result<(), Failure> {
         let mut frame = Some(self.shared.frame(message)?);
         let mut queue = locked(&self.shared.queue);
@@ -488,6 +488,6 @@ impl coqui_web::Channel for Channel {
 
 impl Drop for Channel {
     fn drop(&mut self) {
-        coqui_web::Channel::close(self);
+        coqui_web_channel::Channel::close(self);
     }
 }

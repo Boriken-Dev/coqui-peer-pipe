@@ -22,8 +22,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = []
 # Async listener, stream and message transport over tokio.
 tokio = ["dep:tokio", "coqui-peer/tokio"]
-# A coqui-web `Channel` over a stream, so coqui-agentic-peer links run on it.
-channel = ["dep:coqui-web"]
+# A coqui-web-channel `Channel` over a stream, so coqui-agentic-peer links run on it.
+channel = ["dep:coqui-web-channel"]
 
 [dependencies]
 # ReadTimeout, WriteTimeout, MessageTransport and Weakening, which make this a transport of the
@@ -35,7 +35,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["net", "io-util", "time"], optional = true }
 # The Channel trait, behind `channel`. No features: this crate brings its own driver. The revision
 # coqui-agentic-peer pins, since a second revision would be a second trait.
-coqui-web = { git = "https://github.com/Boriken-Dev/coqui-web", rev = "445007acb04f1b11f8f0f7c9fcf104f694189a2b", default-features = false, optional = true }
+coqui-web-channel = { git = "https://github.com/Boriken-Dev/coqui-web-channel", rev = "0b5b05c9af3417f6b13edc0fc7d9c86c02a63eca", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Named pipes. Microsoft's bindings, which tokio already uses. `interprocess` was the candidate above
@@ -61,7 +61,7 @@ libc = { version = "0.2", default-features = false }
 # The two methods the handshake tests drive, and a link on a Channel.
 coqui-peer-noise = { git = "https://github.com/Boriken-Dev/coqui-peer-noise", rev = "8777403807e3ad6eb6fddc98d9b5b6753bb0e424" }
 coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "9a61a1a9a9ef9ac37e7198c0d911901775760725", features = ["generate", "tokio"] }
-coqui-agentic-peer = { git = "https://github.com/Boriken-Dev/coqui-agentic-peer", rev = "9b1fee4aa12969d7e070182ebc820ca7593fdc17" }
+coqui-agentic-peer = { git = "https://github.com/Boriken-Dev/coqui-agentic-peer", rev = "f6da790585e51345fa58f5e989cedd6500a0b962" }
 # Arbitrary frames and chunkings.
 proptest = { version = "1", default-features = false, features = ["std"] }
 # Temporary socket directories.

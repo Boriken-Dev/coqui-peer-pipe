@@ -29,5 +29,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `Messages`: a `MessageTransport` of length-framed messages with a bound on their size.
 - `asynch`, behind `tokio`: the listener, the stream (`AsyncRead + AsyncWrite`) and `Messages` over
   tokio.
-- `channel`, behind `channel`: a `coqui_web::Channel` over a stream, so `coqui-agentic-peer` links run
+- `channel`, behind `channel`: a `coqui_web_channel::Channel` over a stream, so `coqui-agentic-peer` links run
   on a pipe.

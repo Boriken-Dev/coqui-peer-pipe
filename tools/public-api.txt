@@ -39,14 +39,14 @@ impl coqui_peer_pipe::channel::Channel
 pub fn coqui_peer_pipe::channel::Channel::options() -> coqui_peer_pipe::channel::ChannelOptions
 pub fn coqui_peer_pipe::channel::Channel::peer(&self) -> core::io::error::Result<coqui_peer_pipe::OsIdentity>
 pub fn coqui_peer_pipe::channel::Channel::start(coqui_peer_pipe::Stream) -> core::io::error::Result<Self>
-impl coqui_web::channel::Channel for coqui_peer_pipe::channel::Channel
+impl coqui_web_channel::channel::Channel for coqui_peer_pipe::channel::Channel
 pub fn coqui_peer_pipe::channel::Channel::close(&self)
-pub fn coqui_peer_pipe::channel::Channel::receive(&self, core::option::Option<core::time::Duration>) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, coqui_web::failure::Failure>
-pub fn coqui_peer_pipe::channel::Channel::send(&self, &[u8]) -> core::result::Result<(), coqui_web::failure::Failure>
-pub fn coqui_peer_pipe::channel::Channel::send_timeout(&self, &[u8], core::option::Option<core::time::Duration>) -> core::result::Result<(), coqui_web::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::receive(&self, core::option::Option<core::time::Duration>) -> core::result::Result<core::option::Option<alloc::vec::Vec<u8>>, coqui_web_channel::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::send(&self, &[u8]) -> core::result::Result<(), coqui_web_channel::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::send_timeout(&self, &[u8], core::option::Option<core::time::Duration>) -> core::result::Result<(), coqui_web_channel::failure::Failure>
 pub fn coqui_peer_pipe::channel::Channel::set_max_message(&self, usize)
 pub fn coqui_peer_pipe::channel::Channel::set_max_receive(&self, usize)
-pub fn coqui_peer_pipe::channel::Channel::set_max_receive_after(&self, usize, usize) -> core::result::Result<(), coqui_web::failure::Failure>
+pub fn coqui_peer_pipe::channel::Channel::set_max_receive_after(&self, usize, usize) -> core::result::Result<(), coqui_web_channel::failure::Failure>
 pub fn coqui_peer_pipe::channel::Channel::set_max_send(&self, usize)
 impl core::ops::drop::Drop for coqui_peer_pipe::channel::Channel
 pub fn coqui_peer_pipe::channel::Channel::drop(&mut self)

@@ -8,11 +8,11 @@ package and is self-contained. Development documentation lives with the source a
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
 | `tokio` | `tokio` (`net`, `io-util`, `time`), `coqui-peer/tokio` | module `asynch` | off |
-| `channel` | `coqui-web` | module `channel`: a `coqui_web::Channel`, so `coqui-agentic-peer` links run on a stream | off |
+| `channel` | `coqui-web-channel` | module `channel`: a `coqui_web_channel::Channel`, so `coqui-agentic-peer` links run on a stream | off |
 
 MSRV Rust 1.89. A default build depends on `coqui-peer` (by git revision, `1f00bfe`), `tracing`, on
 Windows `windows-sys`, and on Unix `socket2` and `libc`. Version `0.0.0-alpha.0`, unreleased: depend on a
-git revision, and name the same `coqui-peer` and `coqui-web` revisions if you use them directly. This is a
+git revision, and name the same `coqui-peer` and `coqui-web-channel` revisions if you use them directly. This is a
 transport of `coqui-peer`, not a method: it proves no key, and a method runs over it.
 
 Imports: the crate root holds `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`,
@@ -264,7 +264,7 @@ impl ChannelOptions {
     pub fn weakened(&self) -> Vec<Weakening>;
     pub fn start(self, stream: Stream) -> io::Result<Channel>;
 }
-pub struct Channel;                         // Debug; implements coqui_web::Channel
+pub struct Channel;                         // Debug; implements coqui_web_channel::Channel
 impl Channel {
     pub fn start(stream: Stream) -> io::Result<Channel>;   // one thread of its own, joined on close
     pub fn options() -> ChannelOptions;
