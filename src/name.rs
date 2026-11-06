@@ -62,8 +62,8 @@ impl PipeName {
     }
 
     /// The name at `path`: a socket path on Unix; on Windows `\\.\pipe\NAME` or `\\HOST\pipe\NAME`,
-    /// where `NAME` may hold `\` to group names and may not hold `/`, a control character or a `.` or
-    /// `..` part.
+    /// where `NAME` may hold `\` to group names and may not hold `/`, a control character, a `.` or
+    /// `..` part, or a part ending in a dot or a space, and `HOST` holds only `A-Z a-z 0-9 . - : _ [ ] %`.
     ///
     /// # Errors
     ///
@@ -113,14 +113,22 @@ impl PipeName {
         let rest = lowered.strip_prefix(r"\\").ok_or(Error::InvalidName)?;
         let (host, rest) = rest.split_once('\\').ok_or(Error::InvalidName)?;
         let name = rest.strip_prefix(r"pipe\").ok_or(Error::InvalidName)?;
+        // Win32 drops a part's trailing dots and spaces, which would give one pipe a second name, or
+        // reach the root of the pipe file system (`.. `).
         let name_is_valid = !name.is_empty()
             && name
                 .chars()
                 .all(|character| character != '/' && !character.is_control())
-            && name
-                .split('\\')
-                .all(|part| !part.is_empty() && part != "." && part != "..");
-        if host.is_empty() || host.contains(['/', ' ']) || !name_is_valid {
+            && name.split('\\').all(|part| {
+                !part.is_empty() && part != "." && part != ".." && !part.ends_with(['.', ' '])
+            });
+        // `.` is this host; `?`, another spelling of it, would be a second name for each pipe.
+        let host_is_valid = host == "."
+            || (!host.is_empty()
+                && host
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b".-:_[]%".contains(&byte)));
+        if !host_is_valid || !name_is_valid {
             return Err(Error::InvalidName);
         }
         Ok(Self {
@@ -161,7 +169,8 @@ fn check_name(name: &str) -> Result<(), Error> {
 
 impl fmt::Display for PipeName {
     /// `pipe:NAME` for a local Windows pipe, `\\HOST\pipe\NAME` for another host's, `unix:PATH` on
-    /// Unix. A Unix path that is not UTF-8 is shown lossily and does not parse back.
+    /// Unix. A Unix path that is not UTF-8 is shown lossily, and another host's pipe is never parsed
+    /// from text: neither parses back.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if cfg!(windows) {
             let text = self.path.to_string_lossy();
@@ -177,16 +186,17 @@ impl fmt::Display for PipeName {
 impl FromStr for PipeName {
     type Err = Error;
 
-    /// Takes `pipe:NAME` ([`named`](Self::named), which on Unix reads the environment), `unix:PATH`
-    /// ([`at`](Self::at), [`Error::Unsupported`] on Windows), or a whole path as
-    /// [`at`](Self::at) takes it: `\\` on Windows, `/` on Unix.
+    /// Takes `pipe:NAME` ([`named`](Self::named), which on Unix reads the environment; on Windows any
+    /// name [`at`](Self::at) takes), `unix:PATH` ([`at`](Self::at), [`Error::Unsupported`] on Windows),
+    /// or a whole path as [`at`](Self::at) takes it: `\\.\` on Windows, `/` on Unix.
+    ///
+    /// Text never names another host's pipe, which [`Error::InvalidName`] refuses: opening one sends
+    /// this user's credentials to that host. [`at`](Self::at) and [`on_host`](Self::on_host) name one.
     fn from_str(text: &str) -> Result<Self, Error> {
         if let Some(name) = text.strip_prefix("pipe:") {
-            if cfg!(windows)
-                && name.contains('\\')
-                && let Ok(grouped) = Self::at(format!(r"\\.\pipe\{name}"))
-            {
-                return Ok(grouped);
+            if cfg!(windows) {
+                // Whatever `at` takes on this host, so every local name's text parses back.
+                return Self::at(format!(r"\\.\pipe\{name}"));
             }
             return Self::named(name);
         }
@@ -201,11 +211,16 @@ impl FromStr for PipeName {
         } else {
             text.starts_with('/')
         };
-        if is_whole_path {
-            Self::at(text)
-        } else {
-            Err(Error::InvalidName)
+        if !is_whole_path {
+            return Err(Error::InvalidName);
         }
+        let name = Self::at(text)?;
+        // Opening a pipe on another host sends this user's credentials there, so text, which may come
+        // from anywhere, names this host only; `at` and `on_host` name another one on purpose.
+        if cfg!(windows) && !name.path.to_string_lossy().starts_with(r"\\.\") {
+            return Err(Error::InvalidName);
+        }
+        Ok(name)
     }
 }
 

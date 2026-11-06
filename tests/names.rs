@@ -118,10 +118,47 @@ mod windows {
     }
 
     #[test]
-    fn a_pipe_on_another_host_has_its_own_text_form() {
+    fn spellings_the_system_would_rewrite_are_refused() {
+        // Win32 drops a trailing dot or space, and `\\?\` is another spelling of `\\.\`: each would be
+        // a second name for one pipe, or the root of the pipe file system.
+        for bad in [
+            r"\\.\pipe\a.",
+            r"\\.\pipe\a ",
+            r"\\.\pipe\.. ",
+            r"\\.\pipe\group.\name",
+            r"\\?\pipe\a",
+            "\\\\a\u{1}b\\pipe\\x",
+            "\\\\a\0b\\pipe\\x",
+        ] {
+            assert!(
+                matches!(PipeName::at(bad), Err(Error::InvalidName)),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_name_the_system_takes_displays_as_text_that_parses_back() {
+        let name = PipeName::at(r"\\.\pipe\a b").unwrap();
+        assert_eq!(name.to_string().parse::<PipeName>().unwrap(), name);
+    }
+
+    #[test]
+    fn a_pipe_on_another_host_is_made_on_purpose_and_never_parsed_from_text() {
         let name = PipeName::on_host("host-1", "service").unwrap();
         assert_eq!(name.path().to_str().unwrap(), r"\\host-1\pipe\service");
-        assert_eq!(name.to_string().parse::<PipeName>().unwrap(), name);
+        assert_eq!(PipeName::at(r"\\host-1\pipe\service").unwrap(), name);
+        // Connecting there sends this user's credentials to that host.
+        for text in [
+            name.to_string().as_str(),
+            r"\\127.0.0.1\pipe\x",
+            r"\\localhost\pipe\x",
+        ] {
+            assert!(
+                matches!(text.parse::<PipeName>(), Err(Error::InvalidName)),
+                "{text}"
+            );
+        }
         assert!(matches!(
             PipeName::on_host(r"a\b", "x"),
             Err(Error::InvalidName)
