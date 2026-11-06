@@ -13,6 +13,7 @@ use std::time::Instant;
 use coqui_peer::{ReadTimeout, Weakening, WriteTimeout};
 use coqui_web::Failure;
 
+use crate::deadline;
 use crate::frame::{DEFAULT_MAX_MESSAGE, Decoder, encode, weakened};
 use crate::identity::OsIdentity;
 use crate::stream::Stream;
@@ -21,6 +22,10 @@ use crate::stream::Stream;
 pub const DEFAULT_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 /// The default time the peer may take nothing while there is something to send, as `coqui_web::Limits`.
 pub const DEFAULT_SEND_LIMIT: Duration = Duration::from_secs(30);
+
+/// Bytes counted for each queued message beyond its frame: about what holding one in the queue costs,
+/// so the bound holds for many small messages as for a few large ones.
+const FRAME_COST: usize = 64;
 
 /// Settings of a [`Channel`].
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +58,8 @@ impl ChannelOptions {
         self
     }
 
-    /// The most bytes queued to send; a message that does not fit waits or is refused, as
+    /// The most bytes queued to send, each message counting its frame and 64 bytes more; a message
+    /// that does not fit waits or is refused, as
     /// [`send`](coqui_web::Channel::send) and [`send_timeout`](coqui_web::Channel::send_timeout) say.
     pub fn queued_bytes(mut self, bytes: usize) -> Self {
         self.queued_bytes = bytes;
@@ -270,7 +276,7 @@ impl Shared {
                 });
                 return;
             }
-            locked(&self.queue).bytes -= frame.len();
+            locked(&self.queue).bytes -= frame.len() + FRAME_COST;
             self.room.notify_all();
         }
     }
@@ -295,7 +301,7 @@ impl Shared {
         if queue.closing {
             return Err(Failure::PathLost);
         }
-        let length = frame.as_ref().map_or(0, Vec::len);
+        let length = frame.as_ref().map_or(0, Vec::len) + FRAME_COST;
         if queue.bytes + length > self.queued_limit {
             return Ok(false);
         }
@@ -379,16 +385,16 @@ impl coqui_web::Channel for Channel {
     fn send_timeout(&self, message: &[u8], timeout: Option<Duration>) -> Result<(), Failure> {
         let mut frame = Some(self.shared.frame(message)?);
         // Room for more than the whole budget never comes.
-        if frame.as_ref().map_or(0, Vec::len) > self.shared.queued_limit {
+        if frame.as_ref().map_or(0, Vec::len) + FRAME_COST > self.shared.queued_limit {
             return Err(Failure::NoProgress);
         }
-        let deadline = timeout.map(|limit| Instant::now() + limit);
+        let deadline = deadline::within(timeout);
         let mut queue = locked(&self.shared.queue);
         loop {
             if self.shared.try_queue(&mut queue, &mut frame)? {
                 return Ok(());
             }
-            if deadline.is_some_and(|until| Instant::now() >= until) {
+            if deadline::passed(deadline) {
                 return Err(Failure::Timeout);
             }
             queue = wait_until(&self.shared.room, queue, deadline);
@@ -396,10 +402,10 @@ impl coqui_web::Channel for Channel {
     }
 
     fn receive(&self, timeout: Option<Duration>) -> Result<Option<Vec<u8>>, Failure> {
-        let deadline = timeout.map(|limit| Instant::now() + limit);
+        let deadline = deadline::within(timeout);
         let mut reader = locked(&self.shared.reader);
         while reader.busy {
-            if deadline.is_some_and(|until| Instant::now() >= until) {
+            if deadline::passed(deadline) {
                 return Err(Failure::Timeout);
             }
             reader = wait_until(&self.shared.turn, reader, deadline);
@@ -438,9 +444,9 @@ impl coqui_web::Channel for Channel {
         let mut queue = locked(&self.shared.queue);
         queue.closing = true;
         self.shared.work.notify_all();
-        let until = Instant::now() + self.shared.send_limit;
-        while !queue.written_out && Instant::now() < until {
-            queue = wait_until(&self.shared.finished, queue, Some(until));
+        let until = deadline::after(self.shared.send_limit);
+        while !queue.written_out && !deadline::passed(until) {
+            queue = wait_until(&self.shared.finished, queue, until);
         }
         drop(queue);
         // Also wakes a writer still blocked, a reader, and whoever waits for room.

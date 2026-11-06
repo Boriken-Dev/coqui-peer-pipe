@@ -232,6 +232,48 @@ fn a_peer_that_takes_nothing_for_the_send_limit_ends_the_channel() {
 }
 
 #[test]
+fn every_queued_message_counts_more_than_its_bytes_so_empty_ones_are_bounded_too() {
+    let place = place("empties");
+    let listener = Listener::options()
+        .buffer_size(4096)
+        .bind(&place.name)
+        .unwrap();
+    let client = ChannelOptions::new()
+        .max_message(16 << 20)
+        .queued_bytes(9 << 20)
+        .start(Stream::connect(&place.name).unwrap())
+        .unwrap();
+    let _server = listener.accept().unwrap();
+    // Nobody reads, so this frame is never wholly written and stays counted.
+    client.send(&vec![0; 8 << 20]).unwrap();
+    let mut empties = 0usize;
+    while client.send(b"").is_ok() {
+        empties += 1;
+        assert!(empties < 1 << 20, "the queue never filled");
+    }
+    let room = (1 << 20) - 4;
+    assert!(empties > 0);
+    assert!(
+        empties <= room / 64,
+        "{empties} empty messages queued in {room} bytes"
+    );
+}
+
+#[test]
+fn bounds_too_long_for_the_clock_wait_as_none_would() {
+    let (_place, _listener, client, server) = streams("forever");
+    let client = ChannelOptions::new()
+        .send_limit(Duration::MAX)
+        .start(client)
+        .unwrap();
+    let server = Channel::start(server).unwrap();
+    client.send_timeout(b"x", Some(Duration::MAX)).unwrap();
+    assert_eq!(server.receive(Some(Duration::MAX)).unwrap().unwrap(), b"x");
+    client.close();
+    assert_eq!(server.receive(WAIT), Ok(None));
+}
+
+#[test]
 fn closing_sends_what_is_queued() {
     let (_place, _listener, client, server) = channels("drain");
     let reader = thread::spawn(move || {

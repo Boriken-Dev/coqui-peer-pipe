@@ -312,6 +312,19 @@ mod windows {
     }
 
     #[tokio::test]
+    async fn a_descriptor_that_shuts_out_its_own_user_is_refused_at_bind() {
+        let place = place("shut-out");
+        let result = Listener::bind_with(
+            &place.name,
+            ListenerOptions::new().security_descriptor("D:P"),
+        );
+        assert!(
+            matches!(result, Err(Error::InvalidDescriptor)),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn weakened_settings_are_listed() {
         let place = place("weakened");
         let listener = Listener::bind_with(

@@ -4,7 +4,7 @@
 use core::time::Duration;
 use std::ffi::OsString;
 use std::fs::{self, DirBuilder, File, OpenOptions, Permissions, TryLockError};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::net::Shutdown;
 use std::os::fd::AsFd;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -12,9 +12,10 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use socket2::{Domain, SockAddr, Socket, Type};
+use socket2::{Domain, SockAddr, SockRef, Socket, Type};
 
 use super::unix_os::{READABLE, WRITABLE, effective_user, peer_credentials, wait_ready};
+use crate::deadline;
 use crate::error::Error;
 use crate::identity::OsIdentity;
 use crate::name::PipeName;
@@ -48,11 +49,12 @@ impl Stream {
     ) -> io::Result<Self> {
         socket.set_read_timeout(read)?;
         socket.set_write_timeout(write)?;
+        no_sigpipe(&socket)?;
         Ok(Self { socket })
     }
 
     pub(crate) fn connect(name: &PipeName, options: &ConnectOptions) -> Result<Self, Error> {
-        let deadline = Instant::now() + options.timeout;
+        let deadline = deadline::after(options.timeout);
         loop {
             if let Some(socket) = try_connect(name.path(), deadline)? {
                 return Ok(Self::new(
@@ -61,7 +63,7 @@ impl Stream {
                     options.write_timeout,
                 )?);
             }
-            if Instant::now() >= deadline {
+            if deadline::passed(deadline) {
                 return Err(Error::TimedOut);
             }
             std::thread::sleep(FULL_QUEUE_POLL);
@@ -78,7 +80,7 @@ impl Stream {
 
     pub(crate) fn write(&self, buffer: &[u8]) -> io::Result<usize> {
         let chunk = &buffer[..buffer.len().min(MAX_WRITE)];
-        (&self.socket).write(chunk).map_err(one_timeout)
+        send(&self.socket, chunk).map_err(one_timeout)
     }
 
     pub(crate) fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
@@ -102,6 +104,27 @@ impl Stream {
     }
 }
 
+/// Writes to `socket` so that a peer that left is `BrokenPipe`, never SIGPIPE, which ends a process
+/// that left it at its default (a C host, say). std does the same only from some versions on.
+#[cfg(not(target_vendor = "apple"))]
+pub(crate) fn send(socket: &impl AsFd, buffer: &[u8]) -> io::Result<usize> {
+    SockRef::from(socket).send_with_flags(buffer, libc::MSG_NOSIGNAL)
+}
+
+/// Writes to `socket`, which [`no_sigpipe`] marked: Apple's systems have no `MSG_NOSIGNAL`.
+#[cfg(target_vendor = "apple")]
+pub(crate) fn send(socket: &impl AsFd, buffer: &[u8]) -> io::Result<usize> {
+    SockRef::from(socket).send(buffer)
+}
+
+/// Marks `socket` so that writing to it never raises SIGPIPE, where the system needs a mark for that.
+pub(crate) fn no_sigpipe(socket: &impl AsFd) -> io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    SockRef::from(socket).set_nosigpipe(true)?;
+    let _ = socket;
+    Ok(())
+}
+
 /// A timed-out socket call is `WouldBlock` here and `TimedOut` on Windows; a caller sees one.
 fn one_timeout(error: io::Error) -> io::Error {
     if error.kind() == io::ErrorKind::WouldBlock {
@@ -123,7 +146,10 @@ pub(crate) fn peer_of(socket: &impl AsFd) -> io::Result<OsIdentity> {
 }
 
 /// One attempt to connect: the stream, or `None` when the queue has no room for now.
-pub(crate) fn try_connect(path: &Path, deadline: Instant) -> Result<Option<UnixStream>, Error> {
+pub(crate) fn try_connect(
+    path: &Path,
+    deadline: Option<Instant>,
+) -> Result<Option<UnixStream>, Error> {
     let address = SockAddr::unix(path).map_err(|_| Error::InvalidName)?;
     let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
     socket.set_nonblocking(true)?;
@@ -131,8 +157,7 @@ pub(crate) fn try_connect(path: &Path, deadline: Instant) -> Result<Option<UnixS
         Ok(()) => {}
         Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => return Ok(None),
         Err(error) if error.raw_os_error() == Some(libc::EINPROGRESS) => {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if !wait_ready(socket.as_fd(), WRITABLE, Some(left))? {
+            if !wait_ready(socket.as_fd(), WRITABLE, deadline::left(deadline))? {
                 return Err(Error::TimedOut);
             }
             if let Some(error) = socket.take_error()? {
@@ -178,15 +203,42 @@ impl Drop for Bound {
 /// what it holds, and any of them another user owns. Root can do all of that in any case.
 fn check_directories(directory: &Path, user: u32) -> Result<(), Error> {
     for (depth, ancestor) in directory.ancestors().enumerate() {
-        let metadata = fs::metadata(ancestor)?;
-        if metadata.uid() != user && metadata.uid() != 0 {
-            return Err(Error::ForeignDirectory);
+        check_one(&fs::metadata(ancestor)?, user, depth == 0)?;
+    }
+    Ok(())
+}
+
+/// Judges the way to the socket as written, not following links, since clients open that name: a
+/// link on it is as much the path as the directory it leads to, and its owner can point it elsewhere.
+/// A link must be this user's or root's, and each directory passes [`check_directories`]'s rules.
+fn check_written_way(parent: &Path, user: u32) -> Result<(), Error> {
+    let parts: Vec<_> = parent.components().collect();
+    let mut prefix = PathBuf::new();
+    for (index, part) in parts.iter().enumerate() {
+        prefix.push(part);
+        let found = fs::symlink_metadata(&prefix)?;
+        if found.file_type().is_symlink() {
+            // A link's own mode means nothing; who may replace it is its directory's question.
+            if found.uid() != user && found.uid() != 0 {
+                return Err(Error::ForeignDirectory);
+            }
+        } else {
+            check_one(&found, user, index + 1 == parts.len())?;
         }
-        let others_can_write = metadata.mode() & WRITABLE_BY_OTHERS != 0;
-        let is_sticky = metadata.mode() & STICKY != 0;
-        if others_can_write && (depth == 0 || !is_sticky) {
-            return Err(Error::SharedDirectory);
-        }
+    }
+    Ok(())
+}
+
+/// One directory on the way: this user's or root's, and written by nobody else unless sticky and
+/// above the socket's own directory.
+fn check_one(metadata: &fs::Metadata, user: u32, holds_the_socket: bool) -> Result<(), Error> {
+    if metadata.uid() != user && metadata.uid() != 0 {
+        return Err(Error::ForeignDirectory);
+    }
+    let others_can_write = metadata.mode() & WRITABLE_BY_OTHERS != 0;
+    let is_sticky = metadata.mode() & STICKY != 0;
+    if others_can_write && (holds_the_socket || !is_sticky) {
+        return Err(Error::SharedDirectory);
     }
     Ok(())
 }
@@ -225,8 +277,7 @@ fn clear_path(path: &Path, user: u32, remove_stale: bool) -> Result<(), Error> {
     if found.uid() != user {
         return Err(Error::NameTaken);
     }
-    let deadline = Instant::now() + FULL_QUEUE_POLL;
-    match try_connect(path, deadline) {
+    match try_connect(path, deadline::after(FULL_QUEUE_POLL)) {
         Ok(_) => Err(Error::NameTaken),
         Err(Error::NotListening) if remove_stale => match fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(Error::Io(error)),
@@ -300,6 +351,7 @@ pub(crate) fn bind_socket(
     let directory = fs::canonicalize(parent)?;
     let user = effective_user();
     if !options.shared_directory {
+        check_written_way(parent, user)?;
         check_directories(&directory, user)?;
     }
     let path = directory.join(file_name);
@@ -339,10 +391,9 @@ impl Listener {
     }
 
     pub(crate) fn accept(&self, timeout: Option<Duration>) -> Result<Stream, Error> {
-        let deadline = timeout.map(|limit| Instant::now() + limit);
+        let deadline = deadline::within(timeout);
         loop {
-            let left = deadline.map(|until| until.saturating_duration_since(Instant::now()));
-            match wait_ready(self.socket.as_fd(), READABLE, left) {
+            match wait_ready(self.socket.as_fd(), READABLE, deadline::left(deadline)) {
                 Ok(true) => {}
                 Ok(false) => return Err(Error::TimedOut),
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,

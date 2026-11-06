@@ -12,6 +12,8 @@ use std::time::Instant;
 
 use coqui_peer::{MAX_MESSAGE, MessageTransport, ReadTimeout, Weakening, WriteTimeout};
 
+use crate::deadline;
+
 /// How far the buffer grows ahead of what has arrived, so a declared length costs nothing until it
 /// is sent.
 const CHUNK: usize = 64 * 1024;
@@ -207,7 +209,7 @@ impl<S: Read + Write + ReadTimeout + WriteTimeout> MessageTransport for Messages
             return Err(torn());
         }
         let frame = encode(message, self.max_message)?;
-        let deadline = self.write_limit.get().map(|limit| Instant::now() + limit);
+        let deadline = deadline::within(self.write_limit.get());
         let mut written = 0;
         while written < frame.len() {
             if let Some(until) = deadline {
@@ -244,7 +246,7 @@ impl<S: Read + Write + ReadTimeout + WriteTimeout> MessageTransport for Messages
         if self.broken {
             return Err(too_long());
         }
-        let deadline = self.read_limit.get().map(|limit| Instant::now() + limit);
+        let deadline = deadline::within(self.read_limit.get());
         loop {
             if let Some(until) = deadline {
                 self.io.set_read_timeout(Some(left_until(until)?))?;

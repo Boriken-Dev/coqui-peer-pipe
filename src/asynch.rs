@@ -14,6 +14,7 @@ use std::time::Instant;
 use coqui_peer::{Weakening, asynch::MessageTransport};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+use crate::deadline;
 use crate::error::Error;
 use crate::frame::{DEFAULT_MAX_MESSAGE, Decoder, encode, too_long, torn, weakened};
 use crate::identity::OsIdentity;
@@ -110,6 +111,7 @@ impl Waiting {
 
     async fn accept(&mut self) -> Result<Stream, Error> {
         let (socket, _) = self.socket.accept().await?;
+        sys::no_sigpipe(&socket)?;
         Ok(Stream {
             inner: Inner::Socket(socket),
         })
@@ -120,11 +122,11 @@ impl Waiting {
 impl Waiting {
     fn bind(name: &PipeName, options: &ListenerOptions) -> Result<Self, Error> {
         let instances = sys::Instances::new(name, options)?;
-        let pending = instances.create(true)?.ok_or(Error::NameTaken)?;
+        let (pending, spare) = instances.first_two()?;
         Ok(Self {
             instances,
             pending: sys::server_from(pending)?,
-            spare: None,
+            spare: spare.map(sys::server_from).transpose()?,
         })
     }
 
@@ -191,12 +193,12 @@ impl Stream {
     pub async fn connect_with(name: &PipeName, options: ConnectOptions) -> Result<Self, Error> {
         options.check()?;
         options.log_weakened();
-        let deadline = Instant::now() + options.timeout;
+        let deadline = deadline::after(options.timeout);
         loop {
             if let Some(inner) = Inner::try_connect(name, &options, deadline)? {
                 return Ok(Self { inner });
             }
-            if Instant::now() >= deadline {
+            if deadline::passed(deadline) {
                 return Err(Error::TimedOut);
             }
             tokio::time::sleep(BUSY_POLL).await;
@@ -225,11 +227,12 @@ impl Inner {
     fn try_connect(
         name: &PipeName,
         _options: &ConnectOptions,
-        deadline: Instant,
+        deadline: Option<Instant>,
     ) -> Result<Option<Self>, Error> {
         match sys::try_connect(name.path(), deadline)? {
             Some(socket) => {
                 socket.set_nonblocking(true)?;
+                sys::no_sigpipe(&socket)?;
                 Ok(Some(Self::Socket(tokio::net::UnixStream::from_std(
                     socket,
                 )?)))
@@ -242,7 +245,7 @@ impl Inner {
     fn try_connect(
         name: &PipeName,
         options: &ConnectOptions,
-        _deadline: Instant,
+        _deadline: Option<Instant>,
     ) -> Result<Option<Self>, Error> {
         let path = sys::path_of(name)?;
         match sys::open(&path, options.impersonation)? {
@@ -281,7 +284,23 @@ impl AsyncWrite for Stream {
         context: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        dispatch!(self, inner => Pin::new(inner).poll_write(context, buffer))
+        match &mut self.get_mut().inner {
+            // As the blocking stream writes: a peer that left is an error, never SIGPIPE.
+            #[cfg(unix)]
+            Inner::Socket(socket) => loop {
+                core::task::ready!(socket.poll_write_ready(context))?;
+                match socket.try_io(tokio::io::Interest::WRITABLE, || {
+                    sys::send(&*socket, buffer)
+                }) {
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                    other => return Poll::Ready(other),
+                }
+            },
+            #[cfg(windows)]
+            Inner::Server(pipe) => Pin::new(pipe).poll_write(context, buffer),
+            #[cfg(windows)]
+            Inner::Client(pipe) => Pin::new(pipe).poll_write(context, buffer),
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {

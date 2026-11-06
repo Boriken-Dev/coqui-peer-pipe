@@ -8,7 +8,7 @@ use core::ptr::{null, null_mut};
 use core::time::Duration;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
-use std::sync::{Mutex, PoisonError, RwLock};
+use std::sync::{Mutex, PoisonError, RwLock, TryLockError};
 use std::time::Instant;
 
 use windows_sys::Win32::Foundation::{
@@ -24,7 +24,8 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{
     GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, RevertToSelf,
-    SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
+    TokenIntegrityLevel, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
@@ -43,6 +44,7 @@ use windows_sys::Win32::System::Threading::{
     SetEvent, WaitForMultipleObjects,
 };
 
+use crate::deadline;
 use crate::error::Error;
 use crate::identity::OsIdentity;
 use crate::name::PipeName;
@@ -101,15 +103,18 @@ enum Woken {
     Closing,
 }
 
-fn wait(event: RawHandle, closing: Option<RawHandle>, timeout: Option<Duration>) -> Woken {
+/// Milliseconds for a wait until `deadline`: rounded up, so a wait never ends before its time, and
+/// held below `INFINITE`, so a longer one is looped.
+fn milliseconds_until(deadline: Option<Instant>) -> u32 {
+    deadline::left(deadline).map_or(INFINITE, |left| {
+        u32::try_from(left.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE - 1)
+    })
+}
+
+fn wait(event: RawHandle, closing: Option<RawHandle>, deadline: Option<Instant>) -> Woken {
     let handles = [event as HANDLE, closing.unwrap_or(event) as HANDLE];
-    let deadline = timeout.map(|limit| Instant::now() + limit);
     loop {
-        // Rounded up, so a wait never ends before its time; held below INFINITE, and looped for longer.
-        let milliseconds = deadline.map_or(INFINITE, |until| {
-            let left = until.saturating_duration_since(Instant::now());
-            u32::try_from(left.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE - 1)
-        });
+        let milliseconds = milliseconds_until(deadline);
         let count = if closing.is_some() { 2 } else { 1 };
         // SAFETY: both handles are open for this call. The first one signalled wins, so a finished
         // operation is seen before a shutdown.
@@ -121,7 +126,7 @@ fn wait(event: RawHandle, closing: Option<RawHandle>, timeout: Option<Duration>)
             return Woken::Closing;
         }
         if woken == WAIT_TIMEOUT {
-            if deadline.is_some_and(|until| Instant::now() < until) {
+            if deadline.is_none() || !deadline::passed(deadline) {
                 continue;
             }
             return Woken::TimedOut;
@@ -131,7 +136,8 @@ fn wait(event: RawHandle, closing: Option<RawHandle>, timeout: Option<Duration>)
     }
 }
 
-/// Waits for an operation started with `overlapped` to end, cancelling it on a timeout or a shutdown.
+/// Waits for an operation started with `overlapped` to end, cancelling it at `deadline` or on a
+/// shutdown. Nothing here panics: unwinding while the operation runs would free what it writes to.
 ///
 /// # Safety
 ///
@@ -143,7 +149,7 @@ unsafe fn complete(
     started: i32,
     overlapped: &OVERLAPPED,
     closing: Option<RawHandle>,
-    timeout: Option<Duration>,
+    deadline: Option<Instant>,
 ) -> Completion {
     if started == 0 {
         let code = last_error();
@@ -151,7 +157,7 @@ unsafe fn complete(
             return Completion::Failed(code);
         }
     }
-    let interrupted = match wait(overlapped.hEvent as RawHandle, closing, timeout) {
+    let interrupted = match wait(overlapped.hEvent as RawHandle, closing, deadline) {
         Woken::Completed => None,
         Woken::TimedOut => Some(Completion::TimedOut),
         Woken::Closing => Some(Completion::Closing),
@@ -213,7 +219,7 @@ impl Stream {
 
     pub(crate) fn connect(name: &PipeName, options: &ConnectOptions) -> Result<Self, Error> {
         let path = path_of(name)?;
-        let deadline = Instant::now() + options.timeout;
+        let deadline = deadline::after(options.timeout);
         loop {
             if let Some(handle) = open(&path, options.impersonation)? {
                 return Ok(Self::new(
@@ -223,14 +229,11 @@ impl Stream {
                     options.write_timeout,
                 )?);
             }
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
+            if deadline::passed(deadline) {
                 return Err(Error::TimedOut);
             }
             // Zero asks for the pipe's default wait, so at least one millisecond is asked for.
-            let milliseconds = u32::try_from(left.as_nanos().div_ceil(1_000_000))
-                .unwrap_or(INFINITE - 1)
-                .max(1);
+            let milliseconds = milliseconds_until(deadline).max(1);
             // SAFETY: `path` is NUL-terminated and outlives the call.
             let waited = unsafe { WaitNamedPipeW(path.as_ptr(), milliseconds) };
             if waited == 0 {
@@ -247,10 +250,13 @@ impl Stream {
         if buffer.is_empty() {
             return Ok(0);
         }
-        let timeout = *self
-            .read_timeout
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        // Before the operation starts, so nothing between its start and its end can panic.
+        let deadline = deadline::within(
+            *self
+                .read_timeout
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
         let held = self.handle.read().unwrap_or_else(PoisonError::into_inner);
         let Some(handle) = held.as_ref() else {
             return Ok(0);
@@ -277,7 +283,7 @@ impl Stream {
                 started,
                 &overlapped,
                 Some(self.closing.as_raw_handle()),
-                timeout,
+                deadline,
             )
         };
         match ended {
@@ -304,10 +310,12 @@ impl Stream {
                 "an earlier write timed out, and how much of it arrived cannot be known",
             ));
         }
-        let timeout = *self
-            .write_timeout
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let deadline = deadline::within(
+            *self
+                .write_timeout
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
         let held = self.handle.read().unwrap_or_else(PoisonError::into_inner);
         let Some(handle) = held.as_ref() else {
             return Err(io::ErrorKind::BrokenPipe.into());
@@ -334,7 +342,7 @@ impl Stream {
                 started,
                 &overlapped,
                 Some(self.closing.as_raw_handle()),
-                timeout,
+                deadline,
             )
         };
         match ended {
@@ -477,20 +485,27 @@ impl Drop for Descriptor {
 
 impl Instances {
     pub(crate) fn new(name: &PipeName, options: &ListenerOptions) -> Result<Self, Error> {
+        let sddl = match &options.security_descriptor {
+            // The system would read up to the NUL, and the log would show the rest.
+            Some(sddl) if sddl.contains('\0') => return Err(Error::InvalidDescriptor),
+            Some(sddl) => sddl.clone(),
+            None => default_descriptor()?,
+        };
         Ok(Self {
             path: path_of(name)?,
             remote_clients: options.remote_clients,
             max_instances: options.max_instances,
             buffer_size: options.buffer_size,
             first_instance: options.first_instance,
-            descriptor: wide(&match &options.security_descriptor {
-                Some(sddl) => sddl.clone(),
-                None => {
-                    let user = current_user()?;
-                    format!("O:{user}D:P(A;;GA;;;{user})")
-                }
-            }),
+            descriptor: wide(&sddl),
         })
+    }
+
+    /// The instance that takes the name and the one after it, so a descriptor that does not let this
+    /// user add instances fails here rather than at the first accept.
+    pub(crate) fn first_two(&self) -> Result<(OwnedHandle, Option<OwnedHandle>), Error> {
+        let first = self.create(true)?.ok_or(Error::NameTaken)?;
+        Ok((first, self.create(false)?))
     }
 
     /// Creates the instance that takes the name, or one more of a pipe this holds. `Ok(None)` is an
@@ -530,6 +545,8 @@ impl Instances {
         match (last_error(), first) {
             (ERROR_PIPE_BUSY, false) => Ok(None),
             (ERROR_ACCESS_DENIED | ERROR_PIPE_BUSY, true) => Err(Error::NameTaken),
+            // The pipe is this listener's, so its own descriptor shuts its user out.
+            (ERROR_ACCESS_DENIED, false) => Err(Error::InvalidDescriptor),
             (ERROR_INVALID_NAME | ERROR_PATH_NOT_FOUND | ERROR_FILENAME_EXCED_RANGE, _) => {
                 Err(Error::InvalidName)
             }
@@ -558,25 +575,32 @@ pub(crate) struct Listener {
 impl Listener {
     pub(crate) fn bind(name: &PipeName, options: &ListenerOptions) -> Result<Self, Error> {
         let instances = Instances::new(name, options)?;
-        let pending = instances.create(true)?.ok_or(Error::NameTaken)?;
+        let (pending, spare) = instances.first_two()?;
         Ok(Self {
             instances,
-            waiting: Mutex::new(Waiting {
-                pending,
-                spare: None,
-            }),
+            waiting: Mutex::new(Waiting { pending, spare }),
             read_timeout: options.read_timeout,
             write_timeout: options.write_timeout,
         })
     }
 
     pub(crate) fn accept(&self, timeout: Option<Duration>) -> Result<Stream, Error> {
-        let deadline = timeout.map(|limit| Instant::now() + limit);
-        let mut waiting = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
+        let deadline = deadline::within(timeout);
+        // Callers wait in turn, and a turn that does not come before the deadline is a timeout.
+        let mut waiting = loop {
+            match self.waiting.try_lock() {
+                Ok(waiting) => break waiting,
+                Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) if deadline::passed(deadline) => {
+                    return Err(Error::TimedOut);
+                }
+                Err(TryLockError::WouldBlock) => std::thread::sleep(BUSY_POLL),
+            }
+        };
         while waiting.spare.is_none() {
             waiting.spare = self.instances.create(false)?;
             if waiting.spare.is_none() {
-                if deadline.is_some_and(|until| Instant::now() >= until) {
+                if deadline::passed(deadline) {
                     return Err(Error::TimedOut);
                 }
                 std::thread::sleep(BUSY_POLL);
@@ -606,9 +630,8 @@ fn wait_for_client(instance: &OwnedHandle, deadline: Option<Instant>) -> Result<
     if started == 0 && last_error() == ERROR_PIPE_CONNECTED {
         return Ok(());
     }
-    let left = deadline.map(|until| until.saturating_duration_since(Instant::now()));
     // SAFETY: as above; `overlapped` belongs to the operation just started on `handle`.
-    match unsafe { complete(handle, started, &overlapped, None, left) } {
+    match unsafe { complete(handle, started, &overlapped, None, deadline) } {
         Completion::Done(_) => Ok(()),
         // A client that connected and left before this call: it is seen by the read that follows.
         Completion::Failed(ERROR_NO_DATA) => Ok(()),
@@ -617,17 +640,18 @@ fn wait_for_client(instance: &OwnedHandle, deadline: Option<Instant>) -> Result<
     }
 }
 
-fn token_user(token: HANDLE) -> io::Result<String> {
+/// The SID a token holds for `class`, `TokenUser` or `TokenIntegrityLevel`, as text.
+fn token_sid(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> io::Result<String> {
     let mut needed = 0;
     // SAFETY: a null buffer of size zero asks only for the size.
-    unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &raw mut needed) };
-    // u64s hold TOKEN_USER's alignment.
+    unsafe { GetTokenInformation(token, class, null_mut(), 0, &raw mut needed) };
+    // u64s hold SID_AND_ATTRIBUTES's alignment.
     let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
     // SAFETY: `buffer` is writable for `needed` bytes.
     let got = unsafe {
         GetTokenInformation(
             token,
-            TokenUser,
+            class,
             buffer.as_mut_ptr().cast(),
             needed,
             &raw mut needed,
@@ -636,9 +660,9 @@ fn token_user(token: HANDLE) -> io::Result<String> {
     if got == 0 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: the call succeeded, so the buffer starts with an initialized, aligned TOKEN_USER whose
-    // SID points inside the buffer.
-    let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    // SAFETY: the call succeeded, so the buffer starts with an initialized, aligned TOKEN_USER or
+    // TOKEN_MANDATORY_LABEL, each one SID_AND_ATTRIBUTES, whose SID points inside the buffer.
+    let sid = unsafe { (*buffer.as_ptr().cast::<SID_AND_ATTRIBUTES>()).Sid };
     sid_text(sid)
 }
 
@@ -660,7 +684,8 @@ fn sid_text(sid: PSID) -> io::Result<String> {
     Ok(result)
 }
 
-pub(crate) fn current_user() -> io::Result<String> {
+/// The token this thread acts with: its own when it impersonates, the process's otherwise.
+fn own_token() -> io::Result<OwnedHandle> {
     let mut token = null_mut();
     // SAFETY: the pseudo-handle is always valid; `token` receives a handle on success.
     let on_thread = unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &raw mut token) };
@@ -670,8 +695,34 @@ pub(crate) fn current_user() -> io::Result<String> {
             return Err(io::Error::last_os_error());
         }
     }
-    let token = owned(token);
-    token_user(token.as_raw_handle() as HANDLE)
+    Ok(owned(token))
+}
+
+pub(crate) fn current_user() -> io::Result<String> {
+    token_sid(own_token()?.as_raw_handle() as HANDLE, TokenUser)
+}
+
+/// The integrity level above which a pipe gets a label: a process of the same user below it, one not
+/// elevated or a sandbox, could otherwise connect or add instances and take clients.
+const MEDIUM_INTEGRITY: u32 = 0x2000;
+
+/// This user alone, with full access; above medium integrity, also nobody below this level.
+fn default_descriptor() -> io::Result<String> {
+    let token = own_token()?;
+    let user = token_sid(token.as_raw_handle() as HANDLE, TokenUser)?;
+    let level = token_sid(token.as_raw_handle() as HANDLE, TokenIntegrityLevel)?;
+    // An integrity SID is S-1-16-<level>.
+    let rid = level
+        .rsplit('-')
+        .next()
+        .and_then(|rid| rid.parse::<u32>().ok())
+        .unwrap_or(0);
+    let label = if rid > MEDIUM_INTEGRITY {
+        format!("S:(ML;;NWNRNX;;;{level})")
+    } else {
+        String::new()
+    };
+    Ok(format!("O:{user}D:P(A;;GA;;;{user}){label}"))
 }
 
 /// The user of the client of `server`, read from its token on a thread of its own: an impersonating
@@ -692,7 +743,7 @@ fn client_user(server: RawHandle) -> Option<String> {
                     unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &raw mut token) };
                 let user = (opened != 0).then(|| {
                     let token = owned(token);
-                    token_user(token.as_raw_handle() as HANDLE).ok()
+                    token_sid(token.as_raw_handle() as HANDLE, TokenUser).ok()
                 });
                 // SAFETY: takes nothing; ends the impersonation on this thread.
                 unsafe { RevertToSelf() };

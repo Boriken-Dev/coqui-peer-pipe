@@ -415,6 +415,69 @@ fn the_strict_defaults_list_nothing_as_weakened() {
 }
 
 #[test]
+fn a_bound_too_long_for_the_clock_waits_as_none_would() {
+    let (place, listener, mut client, mut server) = pair("forever");
+    server.set_read_timeout(Some(Duration::MAX)).unwrap();
+    client.set_write_timeout(Some(Duration::MAX)).unwrap();
+    let writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        client.write_all(b"late").unwrap();
+        client
+    });
+    let mut buffer = [0; 4];
+    server.read_exact(&mut buffer).unwrap();
+    assert_eq!(&buffer, b"late");
+    let mut client = writer.join().unwrap();
+
+    let mut messages = Messages::new(server);
+    messages.set_read_timeout(Some(Duration::MAX)).unwrap();
+    messages.set_write_timeout(Some(Duration::MAX)).unwrap();
+    client.write_all(b"\x00\x00\x00\x01x").unwrap();
+    assert_eq!(messages.recv().unwrap(), b"x");
+    messages.send(b"y").unwrap();
+    let mut frame = [0; 5];
+    client.read_exact(&mut frame).unwrap();
+    assert_eq!(&frame, b"\x00\x00\x00\x01y");
+
+    let name = place.name.clone();
+    let connecting = thread::spawn(move || {
+        Stream::options()
+            .timeout(Duration::MAX)
+            .connect(&name)
+            .map(drop)
+    });
+    listener.accept_timeout(Some(Duration::MAX)).unwrap();
+    connecting.join().unwrap().unwrap();
+}
+
+#[test]
+fn an_accept_with_a_timeout_ends_on_time_beside_one_that_waits() {
+    let place = place("turns");
+    let listener = std::sync::Arc::new(Listener::bind(&place.name).unwrap());
+    let waiting = {
+        let listener = listener.clone();
+        thread::spawn(move || listener.accept().map(drop))
+    };
+    thread::sleep(Duration::from_millis(100));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    {
+        let listener = listener.clone();
+        thread::spawn(move || {
+            let started = Instant::now();
+            let result = listener.accept_timeout(Some(Duration::from_millis(100)));
+            let _ = sender.send((started.elapsed(), result.map(drop)));
+        });
+    }
+    let (waited, result) = receiver
+        .recv_timeout(Duration::from_secs(3))
+        .expect("accept_timeout ended within 3 s");
+    assert!(matches!(result, Err(Error::TimedOut)), "{result:?}");
+    assert!(waited < Duration::from_secs(2), "{waited:?}");
+    let _client = Stream::connect(&place.name).unwrap();
+    waiting.join().unwrap().unwrap();
+}
+
+#[test]
 fn a_read_timeout_on_messages_bounds_the_whole_receive_against_a_peer_sending_a_byte_at_a_time() {
     let (_place, _listener, mut client, server) = pair("drip");
     let dripping = thread::spawn(move || {

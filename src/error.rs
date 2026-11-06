@@ -26,7 +26,8 @@ pub enum Error {
     /// A directory on the way to the socket belongs to another user, who could replace the socket;
     /// `ListenerOptions::allow_shared_directory` accepts that.
     ForeignDirectory,
-    /// The security descriptor text does not parse.
+    /// The security descriptor text does not parse, holds a NUL, or does not let this user add
+    /// instances of its own pipe.
     InvalidDescriptor,
     /// Nothing is listening on the name.
     NotListening,
@@ -49,7 +50,7 @@ impl fmt::Display for Error {
             Self::NotASocket => "the path holds something other than a socket",
             Self::SharedDirectory => "others can write a directory on the way to the socket",
             Self::ForeignDirectory => "another user owns a directory on the way to the socket",
-            Self::InvalidDescriptor => "the security descriptor does not parse",
+            Self::InvalidDescriptor => "the security descriptor is not usable",
             Self::NotListening => "nothing is listening on the name",
             Self::AccessDenied => "the operating system refused access",
             Self::TimedOut => "the wait ended first",

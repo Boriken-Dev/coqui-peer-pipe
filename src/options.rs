@@ -78,18 +78,21 @@ impl ListenerOptions {
     }
 
     /// Windows: this descriptor, in SDDL, in place of the default, which gives the current user alone
-    /// full access (`D:P(A;;GA;;;<SID>)`, with that user as owner).
+    /// full access (`D:P(A;;GA;;;<SID>)`, with that user as owner) and, above medium integrity, labels
+    /// the pipe so that nobody below this process's level can connect or add instances.
     ///
-    /// A descriptor granting `FILE_CREATE_PIPE_INSTANCE` (`GENERIC_WRITE` holds it) to another user
-    /// lets that user add instances of this pipe and receive its clients.
+    /// This replaces all of that: no label is added, and a text with no DACL gets the token's default
+    /// DACL. A descriptor granting `FILE_CREATE_PIPE_INSTANCE` (`GENERIC_WRITE` holds it) to another
+    /// user lets that user add instances of this pipe and receive its clients. One holding a NUL, or not
+    /// letting this user add instances, is [`Error::InvalidDescriptor`] at bind.
     pub fn security_descriptor(mut self, sddl: impl Into<String>) -> Self {
         self.security_descriptor = Some(sddl.into());
         self
     }
 
     /// Windows: refuses a name that already exists, by `FILE_FLAG_FIRST_PIPE_INSTANCE`. On by default.
-    /// Turned off, this listener joins an existing pipe its user may add instances to, and clients
-    /// may reach whichever process created the other instances.
+    /// Turned off, this listener joins an existing pipe its user may add instances to, which keeps its
+    /// own descriptor, and clients may reach whichever process created the other instances.
     pub fn first_instance(mut self, first: bool) -> Self {
         self.first_instance = first;
         self
@@ -243,7 +246,8 @@ impl ConnectOptions {
     }
 
     /// How long to wait for a free instance or a place in the queue. A name nobody listens on fails
-    /// at once.
+    /// at once. On Windows the open of another host's pipe is the system's and waits for the network,
+    /// whatever this says.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self

@@ -283,6 +283,22 @@ fn a_symbolic_link_on_the_way_is_judged_by_where_it_leads() {
 }
 
 #[test]
+fn a_link_in_a_directory_others_can_write_is_refused_wherever_it_leads() {
+    let directory = private_directory();
+    let private = directory.path().join("private");
+    fs::create_dir(&private).unwrap();
+    set_mode(&private, 0o700);
+    let open = directory.path().join("open");
+    fs::create_dir(&open).unwrap();
+    set_mode(&open, 0o777);
+    // Clients open the name as written, and others can replace this link with their own.
+    symlink(&private, open.join("link")).unwrap();
+    let result = Listener::bind(&name_in(&open.join("link"), "s.sock"));
+    assert!(matches!(result, Err(Error::SharedDirectory)), "{result:?}");
+    assert!(!private.join("s.sock").exists());
+}
+
+#[test]
 fn a_directory_that_does_not_exist_fails_as_such() {
     let directory = private_directory();
     let result = Listener::bind(&name_in(&directory.path().join("nope"), "s.sock"));
@@ -440,6 +456,23 @@ fn a_directory_of_another_user_is_refused() {
         .allow_shared_directory(true)
         .bind(&name_in(directory.path(), "s.sock"));
     assert!(allowed.is_ok(), "{allowed:?}");
+}
+
+#[test]
+#[ignore = "needs root, to give a link to another user"]
+fn a_link_of_another_user_on_the_way_is_refused() {
+    assert_eq!(current_user().unwrap(), "0", "run this one as root");
+    let directory = searchable_directory();
+    let private = private_directory();
+    let link = directory.path().join("link");
+    symlink(private.path(), &link).unwrap();
+    let c_path = std::ffi::CString::new(link.as_os_str().as_bytes()).unwrap();
+    // SAFETY: the path is NUL-terminated and outlives the call.
+    assert_eq!(unsafe { libc::lchown(c_path.as_ptr(), 65534, 65534) }, 0);
+    // Its owner can point it elsewhere once a client trusts the name.
+    let result = Listener::bind(&name_in(&link, "s.sock"));
+    assert!(matches!(result, Err(Error::ForeignDirectory)), "{result:?}");
+    assert!(!private.path().join("s.sock").exists());
 }
 
 #[test]

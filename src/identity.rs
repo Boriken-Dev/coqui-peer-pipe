@@ -11,7 +11,8 @@ use std::io;
 /// On Unix, `process`, `user` and `group` are the credentials the kernel recorded when the socket
 /// connected. A server on Windows learns the client's process and session from the pipe and its user
 /// from the client's token; a client learns the server's process and session, and the user who owns
-/// the pipe. Anything the system would not say is `None`.
+/// the pipe. Anything the system would not say is `None`. Neither says the integrity level, so on Windows
+/// a sandboxed or non-elevated process of this user is reported as this user.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub struct OsIdentity {

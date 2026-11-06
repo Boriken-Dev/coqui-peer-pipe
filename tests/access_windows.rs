@@ -11,17 +11,24 @@ use std::time::Duration;
 
 use coqui_peer_pipe::{Error, Listener, PipeName, Stream, Weakening, current_user};
 use support::place;
+use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows_sys::Win32::Security::{
-    CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, DuplicateToken, GetTokenInformation,
-    RevertToSelf, SID_AND_ATTRIBUTES, SecurityImpersonation, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
-    TOKEN_IMPERSONATE, TOKEN_QUERY, TOKEN_USER, TokenImpersonationLevel, TokenUser,
+    CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, DuplicateToken, DuplicateTokenEx, GetLengthSid,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, RevertToSelf,
+    SID_AND_ATTRIBUTES, SecurityImpersonation, SetTokenInformation, TOKEN_ADJUST_DEFAULT,
+    TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    TOKEN_USER, TokenImpersonation, TokenImpersonationLevel, TokenIntegrityLevel, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile,
 };
 use windows_sys::Win32::System::Pipes::{
     CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+};
+use windows_sys::Win32::System::SystemServices::{
+    SE_GROUP_INTEGRITY, SECURITY_MANDATORY_LOW_RID, SECURITY_MANDATORY_MEDIUM_RID,
 };
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken, SetThreadToken,
@@ -113,6 +120,150 @@ fn as_restricted<T>(body: impl FnOnce() -> T) -> T {
         CloseHandle(process);
         result
     }
+}
+
+/// The integrity level of this process: the last part of its label's SID.
+fn process_integrity() -> u32 {
+    // SAFETY: each call gets valid out-pointers, the buffer outlives the SID pointer into it, and the
+    // token handle is closed before returning.
+    unsafe {
+        let mut process = null_mut();
+        assert_ne!(
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut process),
+            0
+        );
+        let mut buffer = vec![0u64; 16];
+        let mut needed = 0;
+        assert_ne!(
+            GetTokenInformation(
+                process,
+                TokenIntegrityLevel,
+                buffer.as_mut_ptr().cast(),
+                128,
+                &raw mut needed
+            ),
+            0
+        );
+        CloseHandle(process);
+        let sid = (*buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()).Label.Sid;
+        let count = u32::from(*GetSidSubAuthorityCount(sid));
+        *GetSidSubAuthority(sid, count - 1)
+    }
+}
+
+/// Runs `body` on this thread under a copy of this process's token lowered to integrity level `rid`:
+/// what a process of the same user at that level, a non-elevated or a sandboxed one, can do.
+fn at_integrity<T>(rid: u32, body: impl FnOnce() -> T) -> T {
+    // SAFETY: each call gets valid out-pointers and NUL-terminated text; the label's SID outlives the
+    // call that copies it, and every handle and the SID are released below.
+    unsafe {
+        let mut process = null_mut();
+        assert_ne!(
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_DUPLICATE | TOKEN_QUERY,
+                &raw mut process
+            ),
+            0
+        );
+        let mut lowered = null_mut();
+        assert_ne!(
+            DuplicateTokenEx(
+                process,
+                TOKEN_QUERY | TOKEN_IMPERSONATE | TOKEN_ADJUST_DEFAULT,
+                null(),
+                SecurityImpersonation,
+                TokenImpersonation,
+                &raw mut lowered,
+            ),
+            0
+        );
+        let text: Vec<u16> = format!("S-1-16-{rid}")
+            .encode_utf16()
+            .chain(core::iter::once(0))
+            .collect();
+        let mut sid = null_mut();
+        assert_ne!(ConvertStringSidToSidW(text.as_ptr(), &raw mut sid), 0);
+        let label = TOKEN_MANDATORY_LABEL {
+            Label: SID_AND_ATTRIBUTES {
+                Sid: sid,
+                Attributes: SE_GROUP_INTEGRITY as u32,
+            },
+        };
+        assert_ne!(
+            SetTokenInformation(
+                lowered,
+                TokenIntegrityLevel,
+                (&raw const label).cast(),
+                size_of::<TOKEN_MANDATORY_LABEL>() as u32 + GetLengthSid(sid),
+            ),
+            0
+        );
+        assert_ne!(SetThreadToken(null(), lowered), 0);
+        let result = body();
+        assert_ne!(RevertToSelf(), 0);
+        LocalFree(sid);
+        CloseHandle(lowered);
+        CloseHandle(process);
+        result
+    }
+}
+
+#[test]
+fn a_process_of_this_user_below_the_listeners_integrity_level_is_refused_and_adds_no_instance() {
+    // An elevated listener against a non-elevated process of its user; a non-elevated one against Low.
+    let below = if process_integrity() > SECURITY_MANDATORY_MEDIUM_RID as u32 {
+        SECURITY_MANDATORY_MEDIUM_RID as u32
+    } else {
+        SECURITY_MANDATORY_LOW_RID as u32
+    };
+    let place = place("integrity");
+    let listener = Listener::bind(&place.name).unwrap();
+    let (connected, added) = at_integrity(below, || {
+        (
+            Stream::connect(&place.name).map(drop),
+            raw_pipe(&place.name, FILE_FLAG_OVERLAPPED),
+        )
+    });
+    if let Some(instance) = added {
+        // SAFETY: the handle is this test's.
+        unsafe { CloseHandle(instance) };
+        panic!("a process at level {below:#x} added an instance of the listener's pipe");
+    }
+    assert!(
+        matches!(connected, Err(Error::AccessDenied)),
+        "{connected:?}"
+    );
+    let mut client = Stream::connect(&place.name).unwrap();
+    client.write_all(b"x").unwrap();
+    let mut server = listener.accept().unwrap();
+    let mut byte = [0];
+    server.read_exact(&mut byte).unwrap();
+}
+
+#[test]
+fn a_descriptor_that_shuts_out_its_own_user_is_refused_at_bind() {
+    let place = place("shut-out");
+    let result = Listener::options()
+        .security_descriptor("D:P")
+        .bind(&place.name);
+    assert!(
+        matches!(result, Err(Error::InvalidDescriptor)),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_descriptor_holding_a_nul_is_refused() {
+    let place = place("nul-descriptor");
+    let me = current_user().unwrap();
+    let result = Listener::options()
+        .security_descriptor(format!("D:P(A;;GA;;;{me})\0(D;;GA;;;WD)"))
+        .bind(&place.name);
+    assert!(
+        matches!(result, Err(Error::InvalidDescriptor)),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -379,14 +530,17 @@ fn the_instance_limit_makes_an_accept_wait_until_a_connection_ends() {
 fn a_client_waits_for_a_free_instance_up_to_its_timeout() {
     let place = place("busy");
     let listener = Listener::bind(&place.name).unwrap();
+    // A bind makes the waiting instance and the one after it.
     let _taken = Stream::connect(&place.name).unwrap();
+    let _next = Stream::connect(&place.name).unwrap();
     let started = std::time::Instant::now();
     let result = Stream::options()
         .timeout(Duration::from_millis(150))
         .connect(&place.name);
     assert!(matches!(result, Err(Error::TimedOut)), "{result:?}");
     assert!(started.elapsed() >= Duration::from_millis(140));
-    let _server = listener.accept().unwrap();
+    let _first = listener.accept().unwrap();
+    let _second = listener.accept().unwrap();
     assert!(
         Stream::connect(&place.name).is_ok(),
         "the next instance is free"
