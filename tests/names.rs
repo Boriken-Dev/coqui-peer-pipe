@@ -221,7 +221,7 @@ mod unix {
             .args(["--exact", "unix::prints_a_name_when_asked", "--nocapture"])
             .env_remove("XDG_RUNTIME_DIR")
             .env_remove("TMPDIR")
-            .env("COQUI_PEER_PIPE_TEST_PRINT_NAME", "1");
+            .env("COQUI_TRANSPORT_PIPE_TEST_PRINT_NAME", "1");
         for (name, value) in variables {
             command.env(name, value);
         }
@@ -236,7 +236,7 @@ mod unix {
 
     #[test]
     fn prints_a_name_when_asked() {
-        if std::env::var_os("COQUI_PEER_PIPE_TEST_PRINT_NAME").is_some() {
+        if std::env::var_os("COQUI_TRANSPORT_PIPE_TEST_PRINT_NAME").is_some() {
             match PipeName::named("x") {
                 Ok(name) => println!("NAME={name}"),
                 Err(Error::NoRuntimeDirectory) => println!("NAME=none"),

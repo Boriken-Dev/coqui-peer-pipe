@@ -368,7 +368,7 @@ fn connect_as(path: &Path, uid: u32, gid: u32) -> String {
     set_mode(&copy, 0o755);
     let output = Command::new(&copy)
         .args(["--exact", "prints_what_connecting_gives", "--nocapture"])
-        .env("COQUI_PEER_PIPE_TEST_CONNECT", path.as_os_str())
+        .env("COQUI_TRANSPORT_PIPE_TEST_CONNECT", path.as_os_str())
         .uid(uid)
         .gid(gid)
         .output()
@@ -383,7 +383,7 @@ fn connect_as(path: &Path, uid: u32, gid: u32) -> String {
 
 #[test]
 fn prints_what_connecting_gives() {
-    if let Some(path) = std::env::var_os("COQUI_PEER_PIPE_TEST_CONNECT") {
+    if let Some(path) = std::env::var_os("COQUI_TRANSPORT_PIPE_TEST_CONNECT") {
         let name = PipeName::at(PathBuf::from(path)).unwrap();
         match Stream::connect(&name) {
             Ok(mut client) => {

@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use coqui_transport::frame::LengthPrefix;
 use coqui_transport::{Channel, Failure, StreamChannel};
 use coqui_transport_pipe::{Connector, Listener, Stream};
-use support::{LengthPrefix, place};
+use support::place;
 
 const WAIT: Option<Duration> = Some(Duration::from_secs(10));
 
@@ -28,8 +29,8 @@ fn channels(tag: &str) -> (support::Place, Listener, StreamChannel, StreamChanne
     (
         place,
         listener,
-        StreamChannel::start(client, LengthPrefix).unwrap(),
-        StreamChannel::start(server, LengthPrefix).unwrap(),
+        StreamChannel::start(client, LengthPrefix::u32_be()).unwrap(),
+        StreamChannel::start(server, LengthPrefix::u32_be()).unwrap(),
     )
 }
 
@@ -66,7 +67,7 @@ fn the_peer_is_asked_before_the_stream_is_given_to_a_channel() {
     let (_place, _listener, client, server) = streams("peer");
     let identity = server.peer().unwrap();
     assert_eq!(identity.process, support::expected_process());
-    let _channel = StreamChannel::start(client, LengthPrefix).unwrap();
+    let _channel = StreamChannel::start(client, LengthPrefix::u32_be()).unwrap();
 }
 
 #[test]
@@ -86,11 +87,11 @@ fn closing_sends_what_is_queued_and_the_peer_reads_the_end_in_order() {
 #[test]
 fn closing_with_what_the_peer_sent_unread_does_not_lose_what_was_sent_last() {
     let (_place, _listener, client, server) = streams("linger");
-    let client = StreamChannel::builder(LengthPrefix)
+    let client = StreamChannel::builder(LengthPrefix::u32_be())
         .pending(1)
         .start(client)
         .unwrap();
-    let server = StreamChannel::start(server, LengthPrefix).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix::u32_be()).unwrap();
     for _ in 0..20 {
         server.send(&[1; 10_000]).unwrap();
     }
@@ -104,11 +105,11 @@ fn closing_with_what_the_peer_sent_unread_does_not_lose_what_was_sent_last() {
 #[test]
 fn closing_ends_the_write_direction_at_once() {
     let (_place, _listener, client, server) = streams("half-close");
-    let client = StreamChannel::builder(LengthPrefix)
+    let client = StreamChannel::builder(LengthPrefix::u32_be())
         .linger(Duration::from_secs(3))
         .start(client)
         .unwrap();
-    let server = StreamChannel::start(server, LengthPrefix).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix::u32_be()).unwrap();
     let answering = thread::spawn(move || {
         assert_eq!(server.receive(WAIT), Ok(None));
         server.close();
@@ -149,7 +150,7 @@ fn closing_wakes_a_blocked_receive_and_can_be_repeated() {
 #[test]
 fn a_peer_that_left_inside_a_frame_is_a_lost_path() {
     let (_place, _listener, client, server) = streams("torn");
-    let server = StreamChannel::start(server, LengthPrefix).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix::u32_be()).unwrap();
     (&client).write_all(&[0, 0, 0, 9, 1, 2]).unwrap();
     drop(client);
     assert_eq!(server.receive(WAIT), Err(Failure::PathLost));
@@ -158,8 +159,8 @@ fn a_peer_that_left_inside_a_frame_is_a_lost_path() {
 #[test]
 fn a_message_above_the_receive_bound_ends_the_channel_at_both_ends() {
     let (_place, _listener, client, server) = streams("bound");
-    let client = StreamChannel::start(client, LengthPrefix).unwrap();
-    let server = StreamChannel::builder(LengthPrefix)
+    let client = StreamChannel::start(client, LengthPrefix::u32_be()).unwrap();
+    let server = StreamChannel::builder(LengthPrefix::u32_be())
         .max_message(8)
         .start(server)
         .unwrap();
@@ -178,7 +179,7 @@ fn a_peer_that_takes_nothing_for_the_send_limit_ends_the_channel() {
         .buffer_size(4096)
         .bind(&place.name)
         .unwrap();
-    let client = StreamChannel::builder(LengthPrefix)
+    let client = StreamChannel::builder(LengthPrefix::u32_be())
         .send_limit(Duration::from_millis(200))
         .start(Stream::connect(&place.name).unwrap())
         .unwrap();
@@ -214,8 +215,8 @@ fn the_connector_and_the_listener_traits_give_streams_a_channel_runs_on() {
     let connector = Connector::new(place.name.clone());
     let client = connector.connect(Duration::from_secs(5)).unwrap();
     let server = coqui_transport::Listener::accept(&listener).unwrap();
-    let client = StreamChannel::start(client, LengthPrefix).unwrap();
-    let server = StreamChannel::start(server, LengthPrefix).unwrap();
+    let client = StreamChannel::start(client, LengthPrefix::u32_be()).unwrap();
+    let server = StreamChannel::start(server, LengthPrefix::u32_be()).unwrap();
     client.send(b"through the traits").unwrap();
     assert_eq!(
         server.receive(WAIT).unwrap().unwrap(),

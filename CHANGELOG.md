@@ -43,9 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The crate is `coqui-transport-pipe` (it was `coqui-peer-pipe`), in the `coqui-transport` family: the repository is
   `Boriken-Dev/coqui-transport-pipe`, the library `coqui_transport_pipe`.
 - The `channel` feature is no longer a module: it makes `Stream` a `coqui_transport::Split` (with `ReadHalf` and
-  `WriteHalf`), so `coqui_transport::StreamChannel::start(stream, PeerFrame)` is the channel on a pipe. The wire is
-  unchanged, byte for byte (a test reads `coqui-transport`'s `peer_frame.json` through a real pipe), and a
-  `Messages` and a `StreamChannel` talk to each other.
+  `WriteHalf`), so `coqui_transport::StreamChannel::start(stream, codec)` is the channel on a pipe, with the codec the
+  caller chooses.
 - The crate picks no framing: the caller gives `StreamChannel` a codec. A framing is an implementation detail of
   whoever speaks it, so none lives here.
 - A setting looser than its default is reported, never warned about: `weakened()` returns it (what, its default, its

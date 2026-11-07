@@ -35,7 +35,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["net", "io-util", "time"], optional = true }
 # The connector and listener traits, the codec `Messages` frames with, and `Split`, which `StreamChannel`
 # runs a stream through. The family has no releases for now: a git revision.
-coqui-transport = { git = "https://github.com/Boriken-Dev/coqui-transport", rev = "3cb386f211e67f06ea41d6036b8b299961d2e50c", default-features = false }
+coqui-transport = { git = "https://github.com/Boriken-Dev/coqui-transport", rev = "82563e2282149e543b95cc1dd00fbafc3bfcdf52", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # Named pipes. Microsoft's bindings, which tokio already uses. `interprocess` was the candidate above

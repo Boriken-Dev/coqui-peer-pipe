@@ -11,7 +11,7 @@ package and is self-contained. Development documentation lives with the source a
 | `channel` | nothing | `Stream: coqui_transport::Split`, with `ReadHalf` and `WriteHalf`, so `StreamChannel::start` runs on a stream | off |
 
 MSRV Rust 1.89. A default build depends on `coqui-peer` (by git revision, `1f00bfe`), `coqui-transport` (by git
-revision, `3cb386f`, no features), `tracing`, on Windows `windows-sys`, and on Unix `socket2` and `libc`. Version
+revision, `82563e2`, no features), `tracing`, on Windows `windows-sys`, and on Unix `socket2` and `libc`. Version
 `0.0.0-alpha.0`, unreleased: depend on a git revision, and name the same `coqui-peer` and `coqui-transport`
 revisions if you use them directly. This is a transport of `coqui-peer` and of `coqui-transport`, not a method: it
 proves no key, and a method runs over it.

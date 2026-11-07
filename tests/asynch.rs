@@ -286,16 +286,16 @@ mod unix {
 #[tokio::test]
 async fn an_async_stream_channel_runs_on_the_stream_through_the_connector() {
     use coqui_transport::asynch::{AsyncChannel, AsyncConnector, StreamChannel};
+    use coqui_transport::frame::LengthPrefix;
     use coqui_transport_pipe::asynch::Connector;
-    use support::LengthPrefix;
 
     let place = place("async-channel");
     let mut listener = Listener::bind(&place.name).unwrap();
     let connector = Connector::new(place.name.clone());
     let client = connector.connect(Duration::from_secs(5)).await.unwrap();
     let server = listener.accept().await.unwrap();
-    let client = StreamChannel::new(client, LengthPrefix);
-    let server = StreamChannel::new(server, LengthPrefix);
+    let client = StreamChannel::new(client, LengthPrefix::u32_be());
+    let server = StreamChannel::new(server, LengthPrefix::u32_be());
     client.send(b"over a pipe").await.unwrap();
     let wait = Some(Duration::from_secs(10));
     assert_eq!(server.receive(wait).await.unwrap().unwrap(), b"over a pipe");
