@@ -138,7 +138,7 @@ pub(crate) fn may_use_group(group: u32) -> io::Result<bool> {
 /// The id of the group called `name`, `None` when there is none.
 pub(crate) fn group_id(name: &str) -> io::Result<Option<u32>> {
     let name =
-        std::ffi::CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        alloc::ffi::CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     let mut size = 1024_usize;
     loop {
         let mut buffer: alloc::vec::Vec<libc::c_char> = alloc::vec![0; size];
