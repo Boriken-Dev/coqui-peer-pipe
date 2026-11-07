@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A setting looser than its default is reported, never warned about: `weakened()` returns it (what, its default, its
   value) and the crate logs it at `debug`. Only the application knows whether a shared socket or a long timeout was
   meant.
+- `socket_mode` accepts any mode up to `0o7777`, where it had to hold `0o600` and stay within `0o777`; one other than the
+  default is in `weakened()` and is never refused or warned about.
 - `ListenerOptions::bind` refuses, with `InvalidOptions`, a setting stricter than the default that the platform cannot
   honour (`socket_group` and `remove_stale(false)` on Windows, `security_descriptor` and `max_instances` on Unix). One
   that is meaningless there is no longer dropped silently: `not_applied()` lists it.
