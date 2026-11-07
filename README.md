@@ -24,12 +24,17 @@ See the [documentation](https://boriken-dev.github.io/coqui-transport-pipe/).
   so a server cannot act as it. On Unix a `0600` socket from the moment its path exists, in a directory only its owner
   can write, with a socket left behind removed only when nothing listens on it.
 - **Your choice, and visible**: every default can be loosened on a builder; what is looser is listed by `weakened()`
-  and logged at `warn` through `tracing`.
+  and logged at `debug` through `tracing`. The crate reports and the caller decides: only the application knows whether a
+  shared socket or a long timeout was meant.
 - **Every `coqui-peer` driver**: `Read + Write`, `ReadTimeout` and `WriteTimeout` for streams, so deadlines hold;
-  `AsyncRead + AsyncWrite` under `tokio`; `Messages`, a `MessageTransport` with a bound on message size.
-- **`coqui-transport` channels**: a `Stream` is a `Split`, so `StreamChannel::start(stream, PeerFrame)` is a channel of
-  whole messages on it, with the same wire as `Messages`; `Connector` and `Listener` implement the crate's connector
-  and listener traits.
+  `AsyncRead + AsyncWrite` under `tokio`.
+- **`coqui-transport` channels**: a `Stream` is a `Split`, so `StreamChannel::start(stream, codec)` is a channel of whole
+  messages on it, with the framing the caller chooses (this crate picks none); `Connector` and `Listener` implement the
+  crate's connector and listener traits.
+- **A socket shared with a group** (Unix): `socket_group` or `socket_group_name` with `socket_mode(0o660)`, applied
+  before the socket can be connected to; a group the process cannot set is refused.
+- **Nothing dropped silently**: a setting this platform cannot honour is refused when it would be stricter than the
+  default, and listed by `not_applied()` when it is meaningless here.
 - **The other end's OS identity** (`SO_PEERCRED`, the client's token), as information, never in place of a key proof.
 
 ## Installation
@@ -110,8 +115,8 @@ assert_eq!(options.weakened()[0].setting, "read_timeout");
 
 | Module | Purpose |
 | --- | --- |
-| `coqui_transport_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `Connector`, `OsIdentity`, `Messages`, `Error`, `ReadHalf` and `WriteHalf` (`channel`), and `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and `Weakening`. |
-| `coqui_transport_pipe::asynch` | The listener, the stream, `Connector` and `Messages` over tokio (`tokio`). |
+| `coqui_transport_pipe` | `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`, `Connector`, `OsIdentity`, `Error`, `ReadHalf` and `WriteHalf` (`channel`), and `coqui-peer`'s `ReadTimeout`, `WriteTimeout` and `Weakening`. |
+| `coqui_transport_pipe::asynch` | The listener, the stream and `Connector` over tokio (`tokio`). |
 
 ## Limits
 

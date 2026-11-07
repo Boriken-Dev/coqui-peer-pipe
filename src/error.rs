@@ -29,6 +29,11 @@ pub enum Error {
     /// The security descriptor text does not parse, holds a NUL, or does not let this user add
     /// instances of its own pipe.
     InvalidDescriptor,
+    /// No group has the name given to `ListenerOptions::socket_group_name`.
+    UnknownGroup,
+    /// This process is neither root nor a member of the group given for the socket, so it cannot give it
+    /// that group.
+    GroupDenied,
     /// Nothing is listening on the name.
     NotListening,
     /// The operating system refused this user or this client.
@@ -51,6 +56,8 @@ impl fmt::Display for Error {
             Self::SharedDirectory => "others can write a directory on the way to the socket",
             Self::ForeignDirectory => "another user owns a directory on the way to the socket",
             Self::InvalidDescriptor => "the security descriptor is not usable",
+            Self::UnknownGroup => "no group has that name",
+            Self::GroupDenied => "this process cannot give the socket that group",
             Self::NotListening => "nothing is listening on the name",
             Self::AccessDenied => "the operating system refused access",
             Self::TimedOut => "the wait ended first",
@@ -78,16 +85,18 @@ impl From<Error> for io::Error {
     fn from(error: Error) -> Self {
         let kind = match &error {
             Error::Io(inner) => inner.kind(),
-            Error::InvalidName | Error::InvalidOptions | Error::InvalidDescriptor => {
-                io::ErrorKind::InvalidInput
-            }
+            Error::InvalidName
+            | Error::InvalidOptions
+            | Error::InvalidDescriptor
+            | Error::UnknownGroup => io::ErrorKind::InvalidInput,
             Error::Unsupported => io::ErrorKind::Unsupported,
             Error::NoRuntimeDirectory => io::ErrorKind::NotFound,
             Error::NameTaken => io::ErrorKind::AddrInUse,
             Error::NotASocket => io::ErrorKind::AlreadyExists,
-            Error::SharedDirectory | Error::ForeignDirectory | Error::AccessDenied => {
-                io::ErrorKind::PermissionDenied
-            }
+            Error::SharedDirectory
+            | Error::ForeignDirectory
+            | Error::GroupDenied
+            | Error::AccessDenied => io::ErrorKind::PermissionDenied,
             Error::NotListening => io::ErrorKind::ConnectionRefused,
             Error::TimedOut => io::ErrorKind::TimedOut,
         };

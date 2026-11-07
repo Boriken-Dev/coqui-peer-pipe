@@ -49,6 +49,7 @@ pub struct Listener {
     waiting: Waiting,
     name: PipeName,
     weakened: Vec<Weakening>,
+    not_applied: Vec<Weakening>,
 }
 
 impl Listener {
@@ -70,10 +71,12 @@ impl Listener {
         options.check()?;
         options.log_weakened();
         let weakened = options.weakened();
+        let not_applied = options.not_applied();
         Ok(Self {
             waiting: Waiting::bind(name, &options)?,
             name: name.clone(),
             weakened,
+            not_applied,
         })
     }
 
@@ -96,6 +99,13 @@ impl Listener {
     #[must_use]
     pub fn weakened(&self) -> &[Weakening] {
         &self.weakened
+    }
+
+    /// Every setting this was bound with that this platform could not honour, as
+    /// [`ListenerOptions::not_applied`].
+    #[must_use]
+    pub fn not_applied(&self) -> &[Weakening] {
+        &self.not_applied
     }
 }
 

@@ -14,12 +14,15 @@ use std::time::Instant;
 
 use socket2::{Domain, SockAddr, SockRef, Socket, Type};
 
-use super::unix_os::{READABLE, WRITABLE, effective_user, peer_credentials, wait_ready};
+use super::unix_os::{
+    READABLE, WRITABLE, effective_group, effective_user, group_id, may_use_group, peer_credentials,
+    wait_ready,
+};
 use crate::deadline;
 use crate::error::Error;
 use crate::identity::OsIdentity;
 use crate::name::PipeName;
-use crate::options::{ConnectOptions, ListenerOptions};
+use crate::options::{ConnectOptions, Group, ListenerOptions};
 
 /// One write at most. Linux applies a socket's send timeout to each wait for buffer room, so one large
 /// write to a peer reading slowly outlasts it many times over (32 MiB, 300 ms: 3 s and more).
@@ -334,12 +337,24 @@ fn bind_privately(
     directory: &Path,
     path: &Path,
     options: &ListenerOptions,
+    group: Option<u32>,
 ) -> Result<Socket, Error> {
     let private = PrivateDirectory::create(directory)?;
     let temporary = private.path.join("s");
     let address = SockAddr::unix(&temporary).map_err(|_| Error::InvalidName)?;
     let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
     socket.bind(&address)?;
+    if let Some(group) = group {
+        // The private directory is closed to everyone else until the link below, so the group is
+        // the socket's before anyone can connect.
+        std::os::unix::fs::chown(&temporary, None, Some(group)).map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                Error::GroupDenied
+            } else {
+                Error::Io(error)
+            }
+        })?;
+    }
     fs::set_permissions(&temporary, Permissions::from_mode(options.socket_mode))?;
     socket.listen(options.backlog)?;
     fs::hard_link(&temporary, path).map_err(|error| match error.kind() {
@@ -347,6 +362,33 @@ fn bind_privately(
         _ => Error::Io(error),
     })?;
     Ok(socket)
+}
+
+/// The id of the group in `group`, or why it cannot be one.
+fn resolve_group(group: &Group) -> Result<u32, Error> {
+    match group {
+        Group::Id(id) => Ok(*id),
+        Group::Name(name) => group_id(name)?.ok_or(Error::UnknownGroup),
+    }
+}
+
+/// The group the socket is to have, refused before anything is touched when this process could not
+/// give it.
+fn settable_group(options: &ListenerOptions) -> Result<Option<u32>, Error> {
+    let Some(group) = &options.socket_group else {
+        return Ok(None);
+    };
+    let id = resolve_group(group)?;
+    if may_use_group(id)? {
+        Ok(Some(id))
+    } else {
+        Err(Error::GroupDenied)
+    }
+}
+
+/// Whether `group` is not the process's own: a name that cannot be looked up counts as one.
+pub(crate) fn group_differs(group: &Group) -> bool {
+    resolve_group(group).map_or(true, |id| id != effective_group())
 }
 
 /// Binds `name` after the checks [`Listener`](crate::Listener) documents, returning a listener in
@@ -367,9 +409,10 @@ pub(crate) fn bind_socket(
         check_directories(&directory, user)?;
     }
     let path = directory.join(file_name);
+    let group = settable_group(options)?;
     let lock = take_lock(&path)?;
     clear_path(&path, user, options.remove_stale)?;
-    let socket = bind_privately(&directory, &path, options)?;
+    let socket = bind_privately(&directory, &path, options, group)?;
     socket.set_nonblocking(true)?;
     let bound = fs::symlink_metadata(&path)?;
     Ok((

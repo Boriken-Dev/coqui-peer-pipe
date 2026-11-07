@@ -17,13 +17,14 @@ revisions if you use them directly. This is a transport of `coqui-peer` and of `
 proves no key, and a method runs over it.
 
 Imports: the crate root holds `PipeName`, `Listener`, `ListenerOptions`, `Stream`, `ConnectOptions`,
-`OsIdentity`, `current_user`, `Connector`, `Messages`, `Error`, `ReadHalf` and `WriteHalf` (feature `channel`), the
-`DEFAULT_` constants, and re-exports of `coqui-peer`'s `MessageTransport`, `ReadTimeout`, `WriteTimeout` and
-`Weakening`. One public module: `asynch` (feature `tokio`).
+`OsIdentity`, `current_user`, `Connector`, `Error`, `ReadHalf` and `WriteHalf` (feature `channel`), the
+`DEFAULT_` constants, and re-exports of `coqui-peer`'s `ReadTimeout`, `WriteTimeout` and `Weakening` (the report
+every `weakened()` and `not_applied()` returns: `setting`, `value`, `strict`). One public module: `asynch` (feature `tokio`).
 
 `unsafe` only for the operating system's calls, in `src/sys/windows.rs` and `src/sys/unix_os.rs`; a test
 lists them. No process-wide state. A library prints nothing: a setting looser than its default is
-returned by `weakened()` and logged at `warn` through `tracing`. Nothing reads a file or an environment
+returned by `weakened()` (what, its default and its value) and logged at `debug` through `tracing`, never
+warned: the crate reports and the caller decides. Nothing reads a file or an environment
 variable unless the caller asks: `PipeName::named` and parsing `pipe:NAME` read two on Unix.
 
 Tested on Windows, Linux and FreeBSD (14.5: `getpeereid`, which gives no process there). The macOS path (`getpeereid`, `LOCAL_PEERPID`) is written and has not been
@@ -70,6 +71,7 @@ impl Listener {
     pub fn accept_timeout(&self, timeout: Option<Duration>) -> Result<Stream, Error>;     // Error::TimedOut; the listener goes on
     pub fn name(&self) -> &PipeName;
     pub fn weakened(&self) -> &[Weakening];
+    pub fn not_applied(&self) -> &[Weakening];
 }
 pub struct ListenerOptions;   // Clone, Debug, Default = new(), must_use; every method takes and returns self but the last two
 impl ListenerOptions {
@@ -79,13 +81,16 @@ impl ListenerOptions {
     pub fn first_instance(self, bool);                  // Windows; default true: FILE_FLAG_FIRST_PIPE_INSTANCE. Weakening
     pub fn max_instances(self, u32);                    // Windows; 2..=254, 255 (default) is the system's own limit
     pub fn buffer_size(self, u32);                      // Windows; each direction, default DEFAULT_BUFFER_SIZE
-    pub fn socket_mode(self, u32);                      // Unix; default 0o600, must hold 0o600, at most 0o777. Looser is a weakening
+    pub fn socket_mode(self, u32);                      // Unix; default 0o600, any of 0..=0o7777. Another is reported by weakened(), never refused
+    pub fn socket_group(self, gid: u32);                // Unix; default the process's own. Another is a weakening
+    pub fn socket_group_name(self, name: impl Into<String>);   // Unix; resolved at bind
     pub fn allow_shared_directory(self, bool);          // Unix; default false. Weakening
     pub fn remove_stale(self, bool);                    // Unix; default true
     pub fn backlog(self, i32);                          // Unix; above 0, default DEFAULT_BACKLOG
     pub fn read_timeout(self, Option<Duration>);        // accepted streams; default Some(DEFAULT_IO_TIMEOUT); longer is a weakening
     pub fn write_timeout(self, Option<Duration>);       // the same
-    pub fn weakened(&self) -> Vec<Weakening>;           // on this platform
+    pub fn weakened(&self) -> Vec<Weakening>;           // looser than the default, on this platform
+    pub fn not_applied(&self) -> Vec<Weakening>;        // changed from the default and meaningless on this platform
     pub fn bind(self, name: &PipeName) -> Result<Listener, Error>;   // Error::InvalidOptions for what means nothing
 }
 pub const DEFAULT_IO_TIMEOUT: Duration;      // 30 s
@@ -94,6 +99,14 @@ pub const DEFAULT_BUFFER_SIZE: u32;          // 64 KiB
 pub const DEFAULT_BACKLOG: i32;              // 128
 pub const DEFAULT_SOCKET_MODE: u32;          // 0o600
 ```
+
+**Reporting, not judging.** Whether a looser setting was meant is the caller's to say: the crate never warns. Every
+setting looser than its default is returned by `weakened()` (on the options, the listener, `ConnectOptions`) and logged at
+`debug`. A setting changed from its default that this platform cannot honour is never dropped silently: one that would
+be stricter than the default is `Error::InvalidOptions` at `bind` (Windows: `socket_group`, `remove_stale(false)`; Unix:
+`security_descriptor`, `max_instances` below 255), one that is meaningless here is returned by `not_applied()` (Windows:
+`socket_mode`, `allow_shared_directory`, `backlog`; Unix: `buffer_size`, `allow_remote_clients`, `first_instance(false)`,
+and `allow_impersonation(true)` on `ConnectOptions`) and logged at `debug`.
 
 **On Windows**, `bind` creates the first instance and the one after it with the descriptor
 `O:<SID>D:P(A;;GA;;;<SID>)`, for the user this thread runs as, plus, when its token is above medium integrity
@@ -118,8 +131,14 @@ name is never free while the listener lives. Callers of `accept` on one listener
 3. looks at the path, not following a link. Not a socket is `Error::NotASocket`, and it is left alone. A socket
    of another user is `Error::NameTaken`. A socket something answers on is `Error::NameTaken`. Otherwise it is
    stale and removed, unless `remove_stale(false)`, then `Error::NameTaken`;
-4. binds in a private directory beside it, sets the mode, then links it to the path, so the socket is never seen
-   with another mode, and removes the directory.
+4. binds in a private directory beside it, sets the group (`socket_group`) and the mode, then links it to the path, so the
+   socket is never seen with another group or mode, and removes the directory.
+
+`socket_group` (or `socket_group_name`, looked up at bind) is for a socket shared with a group, as `/run/canoa/<user>.sock`
+owned by the user and the group `canoa` with `socket_mode(0o660)`: a member connects, anyone else is refused by the mode. The
+process must be root or a member of the group: otherwise `Error::GroupDenied`, refused before the lock or the path is
+touched; a name no group has is `Error::UnknownGroup`. A group other than the process's own is in `weakened()`. On
+Windows it is `Error::InvalidOptions`.
 
 Dropping the listener removes the path if it is still this socket.
 
@@ -143,6 +162,7 @@ impl ConnectOptions {
     pub fn read_timeout(self, Option<Duration>);    // default Some(DEFAULT_IO_TIMEOUT); longer is a weakening
     pub fn write_timeout(self, Option<Duration>);   // the same
     pub fn weakened(&self) -> Vec<Weakening>;
+    pub fn not_applied(&self) -> Vec<Weakening>;    // Unix: allow_impersonation(true), which does nothing there
     pub fn connect(self, name: &PipeName) -> Result<Stream, Error>;
 }
 ```
@@ -192,39 +212,6 @@ service and no data yet gives `user: None`, and so does one at anonymous level. 
 process and session, and the owner of the pipe object, which only its creator (or a privileged process) chooses.
 Neither says the integrity level: a sandboxed or non-elevated process of this user is reported as this user.
 
-## Messages (`coqui_transport_pipe::Messages`)
-
-```rust
-pub const DEFAULT_MAX_MESSAGE: usize;   // coqui_transport::frame::DEFAULT_MAX_MESSAGE, 1 MiB, as coqui_peer::MAX_MESSAGE
-pub struct Messages<S>;                 // Debug
-impl<S> Messages<S> {
-    pub fn new(io: S) -> Messages<S>;
-    pub fn with_max_message(self, bytes: usize) -> Messages<S>;   // both ways
-    pub fn max_message(&self) -> usize;
-    pub fn weakened(&self) -> Vec<Weakening>;                     // above the default
-    pub fn get_ref(&self) -> &S;
-    pub fn into_inner(self) -> S;                                 // a frame or part of one read ahead is dropped
-}
-impl<S: Read + Write + ReadTimeout + WriteTimeout> MessageTransport for Messages<S>;
-impl<S: ReadTimeout> ReadTimeout for Messages<S>;
-impl<S: WriteTimeout> WriteTimeout for Messages<S>;
-```
-
-Four big-endian length bytes, then the message: `coqui_transport::frame::PeerFrame`, which is
-`coqui_peer::write_frame`'s format, with a bound of your own. A `recv` reads ahead of the frame it returns (up to 16 KiB at
-a time), so a frame behind it waits in the `Messages` for the next `recv`.
-`send` above the bound is `InvalidInput` and writes nothing. `recv` of a declared length above it is `InvalidData`
-before anything of it is read, and for every later call; the buffer grows as bytes arrive. `recv` at the stream's
-end is `UnexpectedEof`, inside a frame or not.
-
-A timeout set on `Messages` bounds a whole `send` or `recv`, however many reads or writes it takes, so a peer
-sending a byte at a time cannot outlast it; one set on the stream only applies per read or write. A `recv` that timed
-out keeps what arrived for the next. A `send` that stopped inside a frame refuses every later send with `BrokenPipe`.
-`drive_messages_until` sets these, so its deadline is one.
-
-A frame above the bound is `DriveError::Io(InvalidData)` from `drive_messages`, not `DriveError::TooLong`, which
-`coqui-peer` reserves for its own frame functions.
-
 ## Async (`coqui_transport_pipe::asynch`, feature `tokio`)
 
 ```rust
@@ -242,15 +229,12 @@ impl Stream {
     pub async fn connect_with(name: &PipeName, options: ConnectOptions) -> Result<Stream, Error>;
     pub fn peer(&self) -> io::Result<OsIdentity>;
 }
-pub struct Messages<S>;   // new, with_max_message, max_message, weakened, get_ref, into_inner, as above
-impl<S: AsyncRead + AsyncWrite + Unpin + Send> coqui_peer::asynch::MessageTransport for Messages<S>;
 ```
 
 The same checks and instances as the blocking forms. Needs a tokio runtime with I/O enabled, and with time for
 `_until` drivers and the waits for a free instance; tokio panics otherwise. These streams have no timeouts of their
 own, and the options' read and write timeouts mean nothing here: wrap a call in `tokio::time::timeout`, or use
-`coqui_peer::asynch`'s `_until` drivers. A cancelled `recv` keeps what arrived. A `send` that failed or was cancelled
-after it began refuses every later send. `poll_shutdown` ends the writing direction on Unix and does nothing on
+`coqui_peer::asynch`'s `_until` drivers. `poll_shutdown` ends the writing direction on Unix and does nothing on
 Windows, where dropping the stream is the end.
 
 ## Channels and connectors (`coqui_transport_pipe::{ReadHalf, WriteHalf, Connector}`)
@@ -271,8 +255,8 @@ impl coqui_transport::Connector for Connector { type Connection = Stream; type E
 impl coqui_transport::Listener for Listener { type Connection = Stream; type Error = Error; }     // accept(): the inherent accept
 ```
 
-`StreamChannel::start(stream, PeerFrame)` (or its `builder`) is the channel on a pipe: the same four big-endian length
-bytes as `Messages`, so a `Messages` at one end and a `StreamChannel` at the other talk. The channel's contract, bounds,
+`StreamChannel::start(stream, codec)` (or its `builder`) is the channel on a pipe. This crate picks no framing: the caller
+hands `StreamChannel` a `coqui_transport::frame::Codec`. The channel's contract, bounds,
 queueing and close are `coqui-transport`'s `StreamChannel`, which `AGENTS.md` there holds. It is not authenticated: run a key
 proof on it before anything else.
 
@@ -284,13 +268,13 @@ to `start`: the channel does not expose it.
 
 `Connector::connect` and `Listener::accept` return the same `Stream` and errors as `Stream::connect` and the inherent
 `accept`. With `tokio`, `asynch::Connector` is a `coqui_transport::asynch::AsyncConnector` (same fields and builder) and an
-`asynch::Stream` is `AsyncRead + AsyncWrite`, so `coqui_transport::asynch::StreamChannel::new(stream, PeerFrame)` runs on it.
+`asynch::Stream` is `AsyncRead + AsyncWrite`, so `coqui_transport::asynch::StreamChannel::new(stream, codec)` runs on it.
 `asynch::Listener` is not an `AsyncListener`: its `accept` takes `&mut self`.
 
 ## Errors
 
 `Error` (non-exhaustive): `InvalidName`, `Unsupported`, `NoRuntimeDirectory`, `InvalidOptions`, `NameTaken`,
-`NotASocket`, `SharedDirectory`, `ForeignDirectory`, `InvalidDescriptor`, `NotListening`, `AccessDenied`, `TimedOut`,
+`NotASocket`, `SharedDirectory`, `ForeignDirectory`, `InvalidDescriptor`, `UnknownGroup`, `GroupDenied`, `NotListening`, `AccessDenied`, `TimedOut`,
 `Io(io::Error)`. `Display` is one lowercase clause and quotes nothing. `From<io::Error>`, and `From<Error> for io::Error`
 with a matching kind.
 

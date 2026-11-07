@@ -26,11 +26,27 @@ pub const DEFAULT_SOCKET_MODE: u32 = 0o600;
 /// The most instances Windows lets a pipe have, which it treats as no limit of its own.
 pub(crate) const UNLIMITED_INSTANCES: u32 = 255;
 
+/// A group of a Unix socket: an id, or a name looked up when binding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Group {
+    Id(u32),
+    Name(String),
+}
+
+impl core::fmt::Display for Group {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Id(id) => write!(f, "{id}"),
+            Self::Name(name) => f.write_str(name),
+        }
+    }
+}
+
 /// How a [`Listener`] binds, on the strict side unless changed.
 ///
 /// A setting for the other platform has no effect there and is not listed as a weakening. Every
-/// setting looser than its default is listed by [`weakened`](Self::weakened) and logged at `warn`
-/// through `tracing` when binding.
+/// setting looser than its default is listed by [`weakened`](Self::weakened) and logged at `debug`
+/// through `tracing` when binding. The crate reports and does not judge: whether one was meant is the caller's to say.
 #[derive(Clone, Debug)]
 #[must_use]
 pub struct ListenerOptions {
@@ -40,6 +56,7 @@ pub struct ListenerOptions {
     pub(crate) max_instances: u32,
     pub(crate) buffer_size: u32,
     pub(crate) socket_mode: u32,
+    pub(crate) socket_group: Option<Group>,
     pub(crate) shared_directory: bool,
     pub(crate) remove_stale: bool,
     pub(crate) backlog: i32,
@@ -56,6 +73,7 @@ impl Default for ListenerOptions {
             max_instances: UNLIMITED_INSTANCES,
             buffer_size: DEFAULT_BUFFER_SIZE,
             socket_mode: DEFAULT_SOCKET_MODE,
+            socket_group: None,
             shared_directory: false,
             remove_stale: true,
             backlog: DEFAULT_BACKLOG,
@@ -113,9 +131,25 @@ impl ListenerOptions {
         self
     }
 
-    /// Unix: the socket's mode, from the moment the path exists. `0o600` by default.
+    /// Unix: the socket's mode, from the moment the path exists, any of `0` to `0o7777`. `0o600` by default; another is reported by [`weakened`](Self::weakened), never refused.
     pub fn socket_mode(mut self, mode: u32) -> Self {
         self.socket_mode = mode;
+        self
+    }
+
+    /// Unix: the socket's group, by id, from the moment the path exists, so a mode with group access
+    /// (`socket_mode(0o660)`) shares it with that group and no other. The process must be root or a
+    /// member of the group, or the bind is [`Error::GroupDenied`]. A group other than the process's own is
+    /// reported by [`weakened`](Self::weakened). On Windows it is [`Error::InvalidOptions`].
+    pub fn socket_group(mut self, group: u32) -> Self {
+        self.socket_group = Some(Group::Id(group));
+        self
+    }
+
+    /// Unix: as [`socket_group`](Self::socket_group), the group named `name`, looked up when binding:
+    /// [`Error::UnknownGroup`] when there is none.
+    pub fn socket_group_name(mut self, name: impl Into<String>) -> Self {
+        self.socket_group = Some(Group::Name(name.into()));
         self
     }
 
@@ -171,11 +205,21 @@ impl ListenerOptions {
                 list.push(Weakening::new("first_instance", "false", "true"));
             }
         } else {
-            if self.socket_mode & !DEFAULT_SOCKET_MODE != 0 {
+            if self.socket_mode != DEFAULT_SOCKET_MODE {
                 list.push(Weakening::new(
                     "socket_mode",
                     alloc::format!("{:o}", self.socket_mode),
                     alloc::format!("{DEFAULT_SOCKET_MODE:o}"),
+                ));
+            }
+            #[cfg(unix)]
+            if let Some(group) = &self.socket_group
+                && crate::sys::group_differs(group)
+            {
+                list.push(Weakening::new(
+                    "socket_group",
+                    group.to_string(),
+                    "the process's own group",
                 ));
             }
             if self.shared_directory {
@@ -186,20 +230,81 @@ impl ListenerOptions {
         list
     }
 
+    /// Settings changed from their default that this platform cannot honour, reported rather than dropped:
+    /// the ones that are meaningless here (a Windows buffer size on Unix, a Unix backlog on Windows, a
+    /// setting that only loosens a check this platform does not make). A setting that would be stricter than
+    /// the default is not here: it is [`Error::InvalidOptions`] at bind.
+    #[must_use]
+    pub fn not_applied(&self) -> Vec<Weakening> {
+        self.unsupported().1
+    }
+
+    /// Whether a setting stricter than the default cannot be honoured here, and the ones meaningless here.
+    fn unsupported(&self) -> (bool, Vec<Weakening>) {
+        let mut refuse = false;
+        let mut ignored = Vec::new();
+        if cfg!(windows) {
+            refuse |= self.socket_group.is_some() || !self.remove_stale;
+            if self.socket_mode != DEFAULT_SOCKET_MODE {
+                ignored.push(Weakening::new(
+                    "socket_mode",
+                    alloc::format!("{:o}", self.socket_mode),
+                    alloc::format!("{DEFAULT_SOCKET_MODE:o}"),
+                ));
+            }
+            if self.shared_directory {
+                ignored.push(Weakening::new("shared_directory", "allowed", "refused"));
+            }
+            if self.backlog != DEFAULT_BACKLOG {
+                ignored.push(Weakening::new(
+                    "backlog",
+                    self.backlog.to_string(),
+                    DEFAULT_BACKLOG.to_string(),
+                ));
+            }
+        } else {
+            refuse |=
+                self.security_descriptor.is_some() || self.max_instances != UNLIMITED_INSTANCES;
+            if self.buffer_size != DEFAULT_BUFFER_SIZE {
+                ignored.push(Weakening::new(
+                    "buffer_size",
+                    self.buffer_size.to_string(),
+                    DEFAULT_BUFFER_SIZE.to_string(),
+                ));
+            }
+            if self.remote_clients {
+                ignored.push(Weakening::new("remote_clients", "allowed", "refused"));
+            }
+            if !self.first_instance {
+                ignored.push(Weakening::new("first_instance", "false", "true"));
+            }
+        }
+        (refuse, ignored)
+    }
+
     /// Binds `name`: see [`Listener::bind`].
     ///
     /// # Errors
     ///
-    /// As [`Listener::bind`]; [`Error::InvalidOptions`] for a value that means nothing.
+    /// As [`Listener::bind`]; [`Error::InvalidOptions`] for a value that means nothing, and for a setting
+    /// stricter than the default that this platform cannot honour: a socket group, or a stale socket kept,
+    /// on Windows; a security descriptor or an instance limit on Unix.
     pub fn bind(self, name: &PipeName) -> Result<Listener, Error> {
         Listener::with_options(name, self)
     }
 
     pub(crate) fn check(&self) -> Result<(), Error> {
         let instances_are_valid = (2..=UNLIMITED_INSTANCES).contains(&self.max_instances);
-        let mode_is_valid = self.socket_mode <= 0o777 && self.socket_mode & 0o600 == 0o600;
+        let mode_is_valid = self.socket_mode <= 0o7777;
         let backlog_is_valid = self.backlog > 0;
+        let group_is_valid = match &self.socket_group {
+            None => true,
+            Some(Group::Name(name)) => cfg!(unix) && !name.is_empty() && !name.contains('\0'),
+            Some(Group::Id(_)) => cfg!(unix),
+        };
         if instances_are_valid
+            && group_is_valid
+            && !self.unsupported().0
             && mode_is_valid
             && backlog_is_valid
             && timeouts_are_valid(self.read_timeout, self.write_timeout)
@@ -212,13 +317,14 @@ impl ListenerOptions {
 
     pub(crate) fn log_weakened(&self) {
         log(&self.weakened());
+        log_not_applied(&self.not_applied());
     }
 }
 
 /// How [`Stream::connect`] connects.
 ///
 /// Every setting looser than its default is listed by [`weakened`](Self::weakened) and logged at
-/// `warn` through `tracing` when connecting.
+/// `debug` through `tracing` when connecting.
 #[derive(Clone, Debug)]
 #[must_use]
 pub struct ConnectOptions {
@@ -274,6 +380,17 @@ impl ConnectOptions {
         self
     }
 
+    /// Settings changed from their default that this platform cannot honour: `allow_impersonation` on Unix,
+    /// where there is no impersonation level to raise. Reported, never dropped.
+    #[must_use]
+    pub fn not_applied(&self) -> Vec<Weakening> {
+        let mut list = Vec::new();
+        if cfg!(unix) && self.impersonation {
+            list.push(Weakening::new("impersonation", "allowed", "refused"));
+        }
+        list
+    }
+
     /// Every setting looser than its default on this platform.
     #[must_use]
     pub fn weakened(&self) -> Vec<Weakening> {
@@ -304,6 +421,7 @@ impl ConnectOptions {
 
     pub(crate) fn log_weakened(&self) {
         log(&self.weakened());
+        log_not_applied(&self.not_applied());
     }
 }
 
@@ -325,9 +443,20 @@ fn show(timeout: Option<Duration>) -> alloc::string::String {
     timeout.map_or_else(|| "none".to_string(), |limit| alloc::format!("{limit:?}"))
 }
 
+fn log_not_applied(list: &[Weakening]) {
+    for ignored in list {
+        tracing::debug!(
+            setting = %ignored.setting,
+            value = %ignored.value,
+            default = %ignored.strict,
+            "a pipe setting has no effect on this platform"
+        );
+    }
+}
+
 fn log(list: &[Weakening]) {
     for weaker in list {
-        tracing::warn!(
+        tracing::debug!(
             setting = %weaker.setting,
             value = %weaker.value,
             strict = %weaker.strict,

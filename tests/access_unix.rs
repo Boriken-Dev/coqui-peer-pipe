@@ -351,6 +351,11 @@ fn a_full_queue_makes_a_client_wait_up_to_its_timeout() {
 /// Re-runs this test binary as uid 65534, from a copy any user can execute, connecting to `path`:
 /// its answer is what another user gets.
 fn connect_as_another_user(path: &Path) -> String {
+    connect_as(path, 65534, 65534)
+}
+
+/// As [`connect_as_another_user`], as the given user and group.
+fn connect_as(path: &Path, uid: u32, gid: u32) -> String {
     use std::os::unix::process::CommandExt;
 
     let shared = tempfile::Builder::new()
@@ -364,8 +369,8 @@ fn connect_as_another_user(path: &Path) -> String {
     let output = Command::new(&copy)
         .args(["--exact", "prints_what_connecting_gives", "--nocapture"])
         .env("COQUI_PEER_PIPE_TEST_CONNECT", path.as_os_str())
-        .uid(65534)
-        .gid(65534)
+        .uid(uid)
+        .gid(gid)
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -488,4 +493,165 @@ fn a_stale_socket_of_another_user_is_left_alone() {
     let result = Listener::bind(&PipeName::at(&path).unwrap());
     assert!(matches!(result, Err(Error::NameTaken)), "{result:?}");
     assert!(path.exists());
+}
+
+fn own_group() -> u32 {
+    // SAFETY: getegid takes nothing and cannot fail.
+    unsafe { libc::getegid() }
+}
+
+fn is_root() -> bool {
+    current_user().unwrap() == "0"
+}
+
+#[test]
+fn a_group_that_does_not_exist_is_refused_before_anything_is_made() {
+    let directory = private_directory();
+    let name = name_in(directory.path(), "g.sock");
+    let error = Listener::options()
+        .socket_group_name("coqui-no-such-group")
+        .bind(&name)
+        .unwrap_err();
+    assert!(matches!(error, Error::UnknownGroup), "{error:?}");
+    assert!(!name.path().exists());
+}
+
+#[test]
+fn a_group_this_process_cannot_set_is_refused_before_anything_is_made() {
+    if is_root() {
+        return; // root may give any group
+    }
+    let directory = private_directory();
+    let name = name_in(directory.path(), "g.sock");
+    let error = Listener::options()
+        .socket_mode(0o660)
+        .socket_group(4_242_424)
+        .bind(&name)
+        .unwrap_err();
+    assert!(matches!(error, Error::GroupDenied), "{error:?}");
+    assert!(!name.path().exists());
+    let mut lock = name.path().as_os_str().to_owned();
+    lock.push(".lock");
+    assert!(
+        !Path::new(&lock).exists(),
+        "the refusal came after the lock"
+    );
+}
+
+#[test]
+fn the_process_own_group_is_given_and_is_not_reported() {
+    let directory = private_directory();
+    let name = name_in(directory.path(), "g.sock");
+    let options = Listener::options()
+        .socket_mode(0o660)
+        .socket_group(own_group());
+    assert!(
+        options
+            .weakened()
+            .iter()
+            .all(|w| w.setting != "socket_group")
+    );
+    let listener = options.bind(&name).unwrap();
+    assert_eq!(fs::metadata(name.path()).unwrap().gid(), own_group());
+    assert_eq!(fs::metadata(name.path()).unwrap().mode() & 0o777, 0o660);
+    // Only the mode is a weakening here: the group is the process's own.
+    let settings: Vec<_> = listener
+        .weakened()
+        .iter()
+        .map(|w| w.setting.to_string())
+        .collect();
+    assert_eq!(settings, ["socket_mode"]);
+}
+
+#[test]
+fn another_group_is_reported_with_what_it_is_and_what_the_default_is() {
+    let options = Listener::options().socket_group(own_group() + 1);
+    let weakened = options.weakened();
+    let report = weakened
+        .iter()
+        .find(|w| w.setting == "socket_group")
+        .unwrap();
+    assert_eq!(report.value, (own_group() + 1).to_string());
+    assert_eq!(report.strict, "the process's own group");
+}
+
+#[test]
+#[ignore = "needs root, to run a client as another user"]
+fn a_member_of_the_sockets_group_connects_and_a_stranger_is_refused() {
+    assert!(is_root(), "run this one as root");
+    // SAFETY: umask takes a number and cannot fail. The root tests run on one thread.
+    unsafe { libc::umask(0) };
+    let directory = searchable_directory();
+    let name = name_in(directory.path(), "g.sock");
+    let listener = Listener::options()
+        .socket_mode(0o660)
+        .socket_group(4242)
+        .bind(&name)
+        .unwrap();
+    let metadata = fs::metadata(name.path()).unwrap();
+    assert_eq!((metadata.gid(), metadata.mode() & 0o777), (4242, 0o660));
+    assert!(
+        listener
+            .weakened()
+            .iter()
+            .any(|w| w.setting == "socket_group")
+    );
+
+    // User 65534 in group 65534: not a member, so the kernel refuses it.
+    assert_eq!(connect_as(name.path(), 65534, 65534), "denied");
+    assert!(matches!(
+        listener.accept_timeout(Some(Duration::from_millis(100))),
+        Err(Error::TimedOut)
+    ));
+
+    // The same user in group 4242 connects.
+    let path = name.path().to_path_buf();
+    let client = thread::spawn(move || connect_as(&path, 65534, 4242));
+    let mut server = listener
+        .accept_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    let seen = server.peer().unwrap();
+    assert_eq!(seen.user.as_deref(), Some("65534"));
+    assert_eq!(seen.group.as_deref(), Some("4242"));
+    let mut byte = [0];
+    server.read_exact(&mut byte).unwrap();
+    server.write_all(&byte).unwrap();
+    assert_eq!(client.join().unwrap(), "connected");
+}
+
+/// The path is never seen with a group or mode other than the bind's: it appears by a link, after both
+/// are set.
+#[test]
+#[ignore = "needs root, to give a group this process is not in"]
+fn the_socket_is_never_seen_before_its_group_is_set() {
+    assert!(is_root(), "run this one as root");
+    let directory = searchable_directory();
+    for round in 0..100 {
+        let name = name_in(directory.path(), &format!("w{round}.sock"));
+        let path = name.path().to_path_buf();
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = {
+            let stop = stop.clone();
+            thread::spawn(move || {
+                let mut seen = Vec::new();
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(metadata) = fs::symlink_metadata(&path) {
+                        seen.push((metadata.gid(), metadata.mode() & 0o777));
+                    }
+                }
+                seen
+            })
+        };
+        let listener = Listener::options()
+            .socket_mode(0o660)
+            .socket_group(4242)
+            .bind(&name)
+            .unwrap();
+        thread::sleep(Duration::from_millis(2));
+        stop.store(true, Ordering::Relaxed);
+        for seen in watcher.join().unwrap() {
+            assert_eq!(seen, (4242, 0o660), "round {round}");
+        }
+        drop(listener);
+    }
 }

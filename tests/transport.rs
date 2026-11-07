@@ -336,8 +336,7 @@ fn a_meaningless_setting_is_refused_and_a_weak_one_is_not() {
     for options in [
         Listener::options().max_instances(1),
         Listener::options().max_instances(256),
-        Listener::options().socket_mode(0o1000),
-        Listener::options().socket_mode(0o400),
+        Listener::options().socket_mode(0o10000),
         Listener::options().backlog(0),
         Listener::options().read_timeout(Some(Duration::ZERO)),
         Listener::options().write_timeout(Some(Duration::ZERO)),
